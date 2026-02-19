@@ -204,6 +204,9 @@ function StartInteraction(project)
     end
     
     if startNode then
+        -- Notify server that this player is starting a session (security)
+        TriggerServerEvent('rc-interactions:server:startSession', project.id)
+
         -- Setup Camera and Ped
         local ped = SpawnedEntities[project.id]
         if DoesEntityExist(ped) then
@@ -223,10 +226,23 @@ function ProcessNode(project, node)
         ProcessNode(project, nextNode)
         
     elseif node.type == 'DIALOGUE' then
-        -- Play Anim
+        -- Play per-node custom animation if configured, otherwise use default talk anim
         local ped = SpawnedEntities[project.id]
         if DoesEntityExist(ped) then
-            PlayTalkAnim(ped)
+            if node.data.animDict and node.data.animName and node.data.animDict ~= '' and node.data.animName ~= '' then
+                -- Custom animation for this dialogue node (user suggestion: per-node NPC anim)
+                local dict = node.data.animDict
+                local anim = node.data.animName
+                RequestAnimDict(dict)
+                local timeout = 0
+                while not HasAnimDictLoaded(dict) and timeout < 500 do Wait(10) timeout = timeout + 10 end
+                if HasAnimDictLoaded(dict) then
+                    ClearPedTasks(ped)
+                    TaskPlayAnim(ped, dict, anim, 8.0, -8.0, -1, 1, 0, false, false, false)
+                end
+            else
+                PlayTalkAnim(ped)
+            end
             EnsureNpcTalkLoop(project.id, ped)
         end
 
@@ -252,6 +268,9 @@ function ProcessNode(project, node)
 
         -- Clear interaction memory
         InteractionMemory = {}
+
+        -- End server session (security)
+        TriggerServerEvent('rc-interactions:server:endSession')
 
         -- Close UI
         SetNuiFocus(false, false)
@@ -294,6 +313,194 @@ function ProcessNode(project, node)
             end
         end
         -- Continue
+        local nextNode = FindNextNode(project, node.id, 'main')
+        ProcessNode(project, nextNode)
+
+    elseif node.type == 'GIVE_ITEM' then
+        -- Secure: send only projectId + nodeId; server resolves item/count from its cache
+        TriggerServerEvent('rc-interactions:server:processNode', project.id, node.id)
+        if Config.Debug then
+            print('[RC-Interactions] Give item (secure): project=' .. project.id .. ' node=' .. node.id)
+        end
+        local nextNode = FindNextNode(project, node.id, 'main')
+        ProcessNode(project, nextNode)
+
+    elseif node.type == 'REMOVE_ITEM' then
+        -- Secure: send only projectId + nodeId; server resolves item/count from its cache
+        TriggerServerEvent('rc-interactions:server:processNode', project.id, node.id)
+        if Config.Debug then
+            print('[RC-Interactions] Remove item (secure): project=' .. project.id .. ' node=' .. node.id)
+        end
+        local nextNode = FindNextNode(project, node.id, 'main')
+        ProcessNode(project, nextNode)
+
+    elseif node.type == 'GIVE_MONEY' then
+        -- Secure: send only projectId + nodeId; server resolves type/amount from its cache
+        TriggerServerEvent('rc-interactions:server:processNode', project.id, node.id)
+        if Config.Debug then
+            print('[RC-Interactions] Give money (secure): project=' .. project.id .. ' node=' .. node.id)
+        end
+        local nextNode = FindNextNode(project, node.id, 'main')
+        ProcessNode(project, nextNode)
+
+    elseif node.type == 'REMOVE_MONEY' then
+        -- Secure: send only projectId + nodeId; server resolves type/amount from its cache
+        TriggerServerEvent('rc-interactions:server:processNode', project.id, node.id)
+        if Config.Debug then
+            print('[RC-Interactions] Remove money (secure): project=' .. project.id .. ' node=' .. node.id)
+        end
+        local nextNode = FindNextNode(project, node.id, 'main')
+        ProcessNode(project, nextNode)
+
+    elseif node.type == 'ANIMATION' then
+        -- Play animation on NPC or player
+        local dict = node.data.animDict or ''
+        local anim = node.data.animName or ''
+        local target = node.data.animTarget or 'npc'
+        local duration = tonumber(node.data.animDuration) or 3000
+
+        if dict ~= '' and anim ~= '' then
+            RequestAnimDict(dict)
+            local timeout = 0
+            while not HasAnimDictLoaded(dict) and timeout < 500 do Wait(10) timeout = timeout + 10 end
+
+            if HasAnimDictLoaded(dict) then
+                local targetPed
+                if target == 'player' then
+                    targetPed = PlayerPedId()
+                else
+                    targetPed = SpawnedEntities[project.id]
+                end
+
+                if targetPed and DoesEntityExist(targetPed) then
+                    ClearPedTasks(targetPed)
+                    TaskPlayAnim(targetPed, dict, anim, 8.0, -8.0, duration, 0, 0, false, false, false)
+                    if Config.Debug then
+                        print('[RC-Interactions] Animation: ' .. target .. ' plays ' .. dict .. '/' .. anim .. ' for ' .. duration .. 'ms')
+                    end
+                end
+            end
+        end
+
+        -- Wait for the animation duration before continuing
+        Wait(duration)
+        local nextNode = FindNextNode(project, node.id, 'main')
+        ProcessNode(project, nextNode)
+
+    elseif node.type == 'WAIT' then
+        -- Timed pause before continuing
+        local duration = tonumber(node.data.waitDuration) or 2000
+        if Config.Debug then
+            print('[RC-Interactions] Wait: ' .. duration .. 'ms')
+        end
+        Wait(duration)
+        local nextNode = FindNextNode(project, node.id, 'main')
+        ProcessNode(project, nextNode)
+
+    elseif node.type == 'RANDOM' then
+        -- Random branching with weighted outputs
+        local outputs = node.data.randomOutputs or {}
+        if #outputs > 0 then
+            local totalWeight = 0
+            for _, output in ipairs(outputs) do
+                totalWeight = totalWeight + (tonumber(output.weight) or 0)
+            end
+            
+            local roll = math.random() * totalWeight
+            local selectedId = outputs[1].id
+            for _, output in ipairs(outputs) do
+                roll = roll - (tonumber(output.weight) or 0)
+                if roll <= 0 then
+                    selectedId = output.id
+                    break
+                end
+            end
+
+            if Config.Debug then
+                print('[RC-Interactions] Random: selected output ' .. tostring(selectedId))
+            end
+
+            local nextNode = FindNextNode(project, node.id, selectedId)
+            ProcessNode(project, nextNode)
+        else
+            -- No outputs configured, try main
+            local nextNode = FindNextNode(project, node.id, 'main')
+            ProcessNode(project, nextNode)
+        end
+
+    elseif node.type == 'TELEPORT' then
+        -- Teleport the player to specific coordinates
+        local tc = node.data.teleportCoords
+        if tc and tc.x and tc.y and tc.z then
+            local heading = tc.w or 0.0
+            SetEntityCoords(PlayerPedId(), tc.x + 0.0, tc.y + 0.0, tc.z + 0.0, false, false, false, true)
+            SetEntityHeading(PlayerPedId(), heading + 0.0)
+            if Config.Debug then
+                print('[RC-Interactions] Teleport: ' .. tc.x .. ', ' .. tc.y .. ', ' .. tc.z)
+            end
+        end
+        local nextNode = FindNextNode(project, node.id, 'main')
+        ProcessNode(project, nextNode)
+
+    elseif node.type == 'NPC_CHANGE' then
+        -- Change the NPC model mid-conversation
+        local newModel = node.data.newModel or 'a_m_y_business_01'
+        local ped = SpawnedEntities[project.id]
+        
+        if ped and DoesEntityExist(ped) then
+            local coords = GetEntityCoords(ped)
+            local heading = GetEntityHeading(ped)
+            
+            -- Delete old ped
+            DeleteEntity(ped)
+            
+            -- Create new ped
+            local hash = GetHashKey(newModel)
+            RequestModel(hash)
+            local timeout = 0
+            while not HasModelLoaded(hash) and timeout < 5000 do Wait(10) timeout = timeout + 10 end
+            
+            if HasModelLoaded(hash) then
+                local newPed = CreatePed(4, hash, coords.x, coords.y, coords.z, heading, false, true)
+                FreezeEntityPosition(newPed, true)
+                SetEntityInvincible(newPed, true)
+                SetBlockingOfNonTemporaryEvents(newPed, true)
+                SpawnedEntities[project.id] = newPed
+                
+                -- Apply optional animation
+                if node.data.newAnimDict and node.data.newAnimName and node.data.newAnimDict ~= '' and node.data.newAnimName ~= '' then
+                    local dict = node.data.newAnimDict
+                    local anim = node.data.newAnimName
+                    RequestAnimDict(dict)
+                    local t2 = 0
+                    while not HasAnimDictLoaded(dict) and t2 < 500 do Wait(10) t2 = t2 + 10 end
+                    if HasAnimDictLoaded(dict) then
+                        TaskPlayAnim(newPed, dict, anim, 8.0, -8.0, -1, 1, 0, false, false, false)
+                    end
+                end
+                
+                -- Re-point camera at new ped
+                CreateInteractionCam(newPed)
+                
+                if Config.Debug then
+                    print('[RC-Interactions] NPC Change: model=' .. newModel)
+                end
+            end
+        end
+        
+        local nextNode = FindNextNode(project, node.id, 'main')
+        ProcessNode(project, nextNode)
+
+    elseif node.type == 'SOUND' then
+        -- Play a sound effect
+        local soundName = node.data.soundName or ''
+        if soundName ~= '' then
+            -- Use GTA native PlaySoundFrontend for known sounds
+            PlaySoundFrontend(-1, soundName, "HUD_FRONTEND_DEFAULT_SOUNDSET", true)
+            if Config.Debug then
+                print('[RC-Interactions] Sound: ' .. soundName .. ' vol=' .. tostring(node.data.soundVolume or 50))
+            end
+        end
         local nextNode = FindNextNode(project, node.id, 'main')
         ProcessNode(project, nextNode)
     end
@@ -411,6 +618,9 @@ RegisterNUICallback('cancelInteraction', function(data, cb)
 
     -- Clear interaction memory
     InteractionMemory = {}
+
+    -- End server session (security)
+    TriggerServerEvent('rc-interactions:server:endSession')
 
     SetNuiFocus(false, false)
     SendNUIMessage({ action = 'closeDialogue' })

@@ -7,7 +7,8 @@ import RuntimeDialogue from './components/RuntimeDialogue';
 import { Project, ProjectData, NodeType } from './types';
 import { useLanguage } from './contexts/LanguageContext';
 
-import { fetchNui } from './utils/fetchNui';
+import { fetchNui, isEnvBrowser } from './utils/fetchNui';
+import { generateUUID } from './utils/uuid';
 
 // --- MOCK DATA GENERATOR ---
 const generateMockProject = (id: string, name: string, group: string = 'General'): Project => ({
@@ -63,6 +64,15 @@ const App: React.FC = () => {
 
   // Derived state for the currently active project
   const currentProject = projects.find(p => p.id === currentProjectId);
+
+  // --- DEV MODE: auto-show UI when running in a regular browser ---
+  useEffect(() => {
+    if (isEnvBrowser()) {
+      document.body.classList.add('dev-mode');
+      document.body.style.display = 'block';
+      setEditorVisible(true);
+    }
+  }, []);
 
   // --- NUI LISTENERS ---
   useEffect(() => {
@@ -132,7 +142,7 @@ const App: React.FC = () => {
   // --- CRUD OPERATIONS ---
 
   const handleCreateProject = (name: string, group: string = 'General') => {
-    const newId = `proj_${crypto.randomUUID()}`;
+    const newId = `proj_${generateUUID()}`;
     const newProject = generateMockProject(newId, name, group);
     setProjects(prev => [newProject, ...prev]); 
     setCurrentProjectId(newId);
@@ -309,7 +319,7 @@ const App: React.FC = () => {
     }
 
     // Regenerate ID to avoid conflicts
-    const newId = `proj_${crypto.randomUUID()}`;
+    const newId = `proj_${generateUUID()}`;
     const newProject: Project = {
       ...projectToImport,
       id: newId,
@@ -364,6 +374,7 @@ const App: React.FC = () => {
   };
   
   const handleClose = () => {
+      if (isEnvBrowser()) return; // Don't hide in dev mode
       fetchNui('hideFrame');
   };
 
@@ -373,6 +384,13 @@ const App: React.FC = () => {
 
   return (
     <div className={`h-screen w-screen flex flex-col text-zinc-200 selection:bg-zinc-200 selection:text-zinc-900 font-sans ${runtimeDialogue ? 'bg-transparent' : 'bg-[#09090b]'}`}>
+
+      {/* DEV MODE BANNER */}
+      {isEnvBrowser() && (
+        <div className="bg-amber-500/90 text-zinc-950 text-center py-1 text-[10px] font-black uppercase tracking-[0.3em] shrink-0 z-[999]">
+          ⚡ DEV MODE — Browser Preview — NUI callbacks are mocked
+        </div>
+      )}
 
       {runtimeDialogue ? (
         <RuntimeDialogue data={runtimeDialogue} onSelectChoice={handleSelectRuntimeChoice} onCancel={handleCancelRuntime} />

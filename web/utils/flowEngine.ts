@@ -131,6 +131,41 @@ export function traverseLogic(
       continue;
     }
 
+    // Phase 2 pass-through nodes: GIVE_ITEM, REMOVE_ITEM, GIVE_MONEY, REMOVE_MONEY,
+    // ANIMATION, WAIT, TELEPORT, NPC_CHANGE, SOUND
+    if (
+      node.type === NodeType.GIVE_ITEM ||
+      node.type === NodeType.REMOVE_ITEM ||
+      node.type === NodeType.GIVE_MONEY ||
+      node.type === NodeType.REMOVE_MONEY ||
+      node.type === NodeType.ANIMATION ||
+      node.type === NodeType.WAIT ||
+      node.type === NodeType.TELEPORT ||
+      node.type === NodeType.NPC_CHANGE ||
+      node.type === NodeType.SOUND
+    ) {
+      const next = findNextNode(graph, node.id);
+      currentId = next?.id ?? null;
+      continue;
+    }
+
+    // RANDOM — weighted random branch
+    if (node.type === NodeType.RANDOM) {
+      const outputs = node.data.randomOutputs || [];
+      if (outputs.length === 0) return null;
+      const totalWeight = outputs.reduce((sum, o) => sum + (o.weight || 0), 0);
+      if (totalWeight <= 0) return null;
+      let roll = Math.random() * totalWeight;
+      let selectedId = outputs[0].id;
+      for (const output of outputs) {
+        roll -= (output.weight || 0);
+        if (roll <= 0) { selectedId = output.id; break; }
+      }
+      const next = findNextNode(graph, node.id, selectedId);
+      currentId = next?.id ?? null;
+      continue;
+    }
+
     // Unknown type
     return null;
   }

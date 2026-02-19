@@ -74,6 +74,104 @@ const GameSimulator: React.FC<GameSimulatorProps> = ({ project }) => {
             continue;
         }
 
+        // GIVE_ITEM / REMOVE_ITEM — pass through (simulated, no actual inventory)
+        if (node.type === NodeType.GIVE_ITEM) {
+            console.log(`[SIM] Give item: ${node.data.itemCount || 1}x ${node.data.itemName || 'item'}`);
+            const conn = project.connections.find(c => c.fromNodeId === node.id);
+            if (!conn) return null;
+            currentId = conn.toNodeId;
+            continue;
+        }
+
+        if (node.type === NodeType.REMOVE_ITEM) {
+            console.log(`[SIM] Remove item: ${node.data.itemCount || 1}x ${node.data.itemName || 'item'}`);
+            const conn = project.connections.find(c => c.fromNodeId === node.id);
+            if (!conn) return null;
+            currentId = conn.toNodeId;
+            continue;
+        }
+
+        // GIVE_MONEY / REMOVE_MONEY — pass through
+        if (node.type === NodeType.GIVE_MONEY) {
+            console.log(`[SIM] Give money: $${node.data.moneyAmount || 0} (${node.data.moneyType || 'cash'})`);
+            const conn = project.connections.find(c => c.fromNodeId === node.id);
+            if (!conn) return null;
+            currentId = conn.toNodeId;
+            continue;
+        }
+
+        if (node.type === NodeType.REMOVE_MONEY) {
+            console.log(`[SIM] Remove money: $${node.data.moneyAmount || 0} (${node.data.moneyType || 'cash'})`);
+            const conn = project.connections.find(c => c.fromNodeId === node.id);
+            if (!conn) return null;
+            currentId = conn.toNodeId;
+            continue;
+        }
+
+        // ANIMATION — pass through
+        if (node.type === NodeType.ANIMATION) {
+            console.log(`[SIM] Animation: ${node.data.animTarget || 'npc'} plays ${node.data.animDict}/${node.data.animName} for ${node.data.animDuration}ms`);
+            const conn = project.connections.find(c => c.fromNodeId === node.id);
+            if (!conn) return null;
+            currentId = conn.toNodeId;
+            continue;
+        }
+
+        // WAIT — pass through (instant in simulation)
+        if (node.type === NodeType.WAIT) {
+            console.log(`[SIM] Wait: ${node.data.waitDuration || 0}ms`);
+            const conn = project.connections.find(c => c.fromNodeId === node.id);
+            if (!conn) return null;
+            currentId = conn.toNodeId;
+            continue;
+        }
+
+        // RANDOM — weighted random branch
+        if (node.type === NodeType.RANDOM) {
+            const outputs = node.data.randomOutputs || [];
+            if (outputs.length === 0) return null;
+            const totalWeight = outputs.reduce((sum, o) => sum + (o.weight || 0), 0);
+            let roll = Math.random() * totalWeight;
+            let selectedOutput = outputs[0];
+            for (const output of outputs) {
+                roll -= (output.weight || 0);
+                if (roll <= 0) { selectedOutput = output; break; }
+            }
+            console.log(`[SIM] Random: selected output ${selectedOutput.id} (weight ${selectedOutput.weight}%)`);
+            const conn = project.connections.find(c => c.fromNodeId === node.id && c.fromPort === selectedOutput.id);
+            if (!conn) return null;
+            currentId = conn.toNodeId;
+            continue;
+        }
+
+        // TELEPORT — pass through
+        if (node.type === NodeType.TELEPORT) {
+            const tc = node.data.teleportCoords;
+            console.log(`[SIM] Teleport: ${tc?.x}, ${tc?.y}, ${tc?.z}`);
+            const conn = project.connections.find(c => c.fromNodeId === node.id);
+            if (!conn) return null;
+            currentId = conn.toNodeId;
+            continue;
+        }
+
+        // NPC_CHANGE — pass through
+        if (node.type === NodeType.NPC_CHANGE) {
+            console.log(`[SIM] NPC Change: model=${node.data.newModel}`);
+            const conn = project.connections.find(c => c.fromNodeId === node.id);
+            if (!conn) return null;
+            currentId = conn.toNodeId;
+            continue;
+        }
+
+        // SOUND — pass through
+        if (node.type === NodeType.SOUND) {
+            console.log(`[SIM] Sound: ${node.data.soundName} vol=${node.data.soundVolume}`);
+            const conn = project.connections.find(c => c.fromNodeId === node.id);
+            if (!conn) return null;
+            currentId = conn.toNodeId;
+            continue;
+        }
+
         if (node.type === NodeType.START || node.type === NodeType.EVENT) {
              const conn = project.connections.find(c => c.fromNodeId === node.id);
              if (!conn) return null;

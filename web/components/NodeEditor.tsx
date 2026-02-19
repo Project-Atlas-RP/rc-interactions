@@ -1,8 +1,9 @@
 
 import React, { useState, useRef, useCallback } from 'react';
-import { ProjectData, DialogueNode, Connection, NodeType, WorldCoords } from '../types';
+import { ProjectData, DialogueNode, Connection, NodeType, WorldCoords, RandomOutput } from '../types';
 import { useLanguage } from '../contexts/LanguageContext';
 import { fetchNui } from '../utils/fetchNui';
+import { generateUUID } from '../utils/uuid';
 
 interface NodeEditorProps {
   project: ProjectData;
@@ -79,8 +80,23 @@ const NodeEditor: React.FC<NodeEditorProps> = ({ project, setProject }) => {
 
     // Output logic per node type
     
-    // START / SET_VAR / EVENT / END: Output is top-right header area
-    if (node.type === NodeType.START || node.type === NodeType.SET_VARIABLE || node.type === NodeType.EVENT || node.type === NodeType.END) {
+    // Single output nodes: Output is top-right header area
+    if (node.type === NodeType.START || node.type === NodeType.SET_VARIABLE || node.type === NodeType.EVENT || node.type === NodeType.END
+        || node.type === NodeType.GIVE_ITEM || node.type === NodeType.REMOVE_ITEM
+        || node.type === NodeType.GIVE_MONEY || node.type === NodeType.REMOVE_MONEY
+        || node.type === NodeType.ANIMATION || node.type === NodeType.WAIT
+        || node.type === NodeType.TELEPORT || node.type === NodeType.NPC_CHANGE
+        || node.type === NodeType.SOUND) {
+      return { x: node.position.x + width, y: node.position.y + 20 };
+    }
+
+    // RANDOM NODE: Dynamic outputs
+    if (node.type === NodeType.RANDOM) {
+      const outputIndex = node.data.randomOutputs?.findIndex(o => o.id === portId) ?? -1;
+      if (outputIndex >= 0) {
+        const yOffset = 80 + (outputIndex * 44) + 18;
+        return { x: node.position.x + width, y: node.position.y + yOffset };
+      }
       return { x: node.position.x + width, y: node.position.y + 20 };
     }
 
@@ -144,7 +160,8 @@ const NodeEditor: React.FC<NodeEditorProps> = ({ project, setProject }) => {
     );
 
     const newConn: Connection = {
-      id: `conn-${crypto.randomUUID()}`,
+      id: `conn-${generateUUID()}`,
+
       fromNodeId: activeConn.fromNodeId,
       fromPort: activeConn.fromPort,
       toNodeId: targetNodeId
@@ -229,6 +246,16 @@ const NodeEditor: React.FC<NodeEditorProps> = ({ project, setProject }) => {
         case NodeType.CONDITION: return 'text-amber-400 border-amber-500/20 bg-amber-900/10';
         case NodeType.SET_VARIABLE: return 'text-sky-400 border-sky-500/20 bg-sky-900/10';
         case NodeType.EVENT: return 'text-purple-400 border-purple-500/20 bg-purple-900/10';
+        case NodeType.GIVE_ITEM: return 'text-lime-400 border-lime-500/20 bg-lime-900/10';
+        case NodeType.REMOVE_ITEM: return 'text-orange-400 border-orange-500/20 bg-orange-900/10';
+        case NodeType.GIVE_MONEY: return 'text-green-400 border-green-500/20 bg-green-900/10';
+        case NodeType.REMOVE_MONEY: return 'text-red-400 border-red-500/20 bg-red-900/10';
+        case NodeType.ANIMATION: return 'text-pink-400 border-pink-500/20 bg-pink-900/10';
+        case NodeType.WAIT: return 'text-cyan-400 border-cyan-500/20 bg-cyan-900/10';
+        case NodeType.RANDOM: return 'text-yellow-400 border-yellow-500/20 bg-yellow-900/10';
+        case NodeType.TELEPORT: return 'text-indigo-400 border-indigo-500/20 bg-indigo-900/10';
+        case NodeType.NPC_CHANGE: return 'text-teal-400 border-teal-500/20 bg-teal-900/10';
+        case NodeType.SOUND: return 'text-fuchsia-400 border-fuchsia-500/20 bg-fuchsia-900/10';
         default: return 'text-zinc-500 border-zinc-800 bg-zinc-900/50';
     }
   };
@@ -245,17 +272,42 @@ const NodeEditor: React.FC<NodeEditorProps> = ({ project, setProject }) => {
     }
 
     const newNode: DialogueNode = {
-      id: `${type.toLowerCase()}-${crypto.randomUUID()}`,
+      id: `${type.toLowerCase()}-${generateUUID()}`,
       type,
       position: pos,
       data: {
         model: type === NodeType.START ? 'a_m_y_business_01' : undefined,
         npcName: "Entity",
         text: type === NodeType.DIALOGUE ? t('editor.type_text') : undefined,
-        choices: type === NodeType.DIALOGUE ? [{ id: `c-${crypto.randomUUID()}`, text: t('editor.type_next'), nextNodeId: null }] : [],
+        choices: type === NodeType.DIALOGUE ? [{ id: `c-${generateUUID()}`, text: t('editor.type_next'), nextNodeId: null }] : [],
         variableName: "var",
         conditionOperator: '==',
-        variableValue: "true"
+        variableValue: "true",
+        // GIVE_ITEM / REMOVE_ITEM defaults
+        itemName: (type === NodeType.GIVE_ITEM || type === NodeType.REMOVE_ITEM) ? 'bread' : undefined,
+        itemCount: (type === NodeType.GIVE_ITEM || type === NodeType.REMOVE_ITEM) ? 1 : undefined,
+        // GIVE_MONEY / REMOVE_MONEY defaults
+        moneyType: (type === NodeType.GIVE_MONEY || type === NodeType.REMOVE_MONEY) ? 'cash' : undefined,
+        moneyAmount: (type === NodeType.GIVE_MONEY || type === NodeType.REMOVE_MONEY) ? 100 : undefined,
+        // ANIMATION defaults
+        animDict: type === NodeType.ANIMATION ? 'anim@mp_player_intcelebrationmale@wave' : undefined,
+        animName: type === NodeType.ANIMATION ? 'wave' : undefined,
+        animTarget: type === NodeType.ANIMATION ? 'npc' : undefined,
+        animDuration: type === NodeType.ANIMATION ? 3000 : undefined,
+        // WAIT default
+        waitDuration: type === NodeType.WAIT ? 2000 : undefined,
+        // RANDOM defaults
+        randomOutputs: type === NodeType.RANDOM ? [
+          { id: `ro-${generateUUID()}`, weight: 50 },
+          { id: `ro-${generateUUID()}`, weight: 50 }
+        ] : undefined,
+        // TELEPORT default
+        teleportCoords: type === NodeType.TELEPORT ? { x: 0, y: 0, z: 0, w: 0 } : undefined,
+        // NPC_CHANGE defaults
+        newModel: type === NodeType.NPC_CHANGE ? 'a_m_y_business_01' : undefined,
+        // SOUND defaults
+        soundName: type === NodeType.SOUND ? '' : undefined,
+        soundVolume: type === NodeType.SOUND ? 50 : undefined,
       }
     };
     saveToHistory();
@@ -293,7 +345,7 @@ const NodeEditor: React.FC<NodeEditorProps> = ({ project, setProject }) => {
       ...prev,
       nodes: prev.nodes.map(node => {
         if (node.id === nodeId) {
-          const newChoice = { id: `c-${crypto.randomUUID()}`, text: t('editor.type_option'), nextNodeId: null };
+          const newChoice = { id: `c-${generateUUID()}`, text: t('editor.type_option'), nextNodeId: null };
           return { ...node, data: { ...node.data, choices: [...(node.data.choices || []), newChoice] } };
         }
         return node;
@@ -349,6 +401,36 @@ const NodeEditor: React.FC<NodeEditorProps> = ({ project, setProject }) => {
                 )}
                 {type === NodeType.END && (
                     <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-rose-500"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect></svg>
+                )}
+                {type === NodeType.GIVE_ITEM && (
+                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-lime-500"><path d="M12 5v14"></path><path d="M5 12h14"></path></svg>
+                )}
+                {type === NodeType.REMOVE_ITEM && (
+                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-orange-500"><path d="M5 12h14"></path></svg>
+                )}
+                {type === NodeType.GIVE_MONEY && (
+                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-green-500"><line x1="12" y1="1" x2="12" y2="23"></line><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"></path></svg>
+                )}
+                {type === NodeType.REMOVE_MONEY && (
+                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-red-500"><line x1="12" y1="1" x2="12" y2="23"></line><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"></path><line x1="4" y1="4" x2="20" y2="20"></line></svg>
+                )}
+                {type === NodeType.ANIMATION && (
+                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-pink-500"><path d="M16 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path><circle cx="8.5" cy="7" r="4"></circle><line x1="20" y1="8" x2="20" y2="14"></line><line x1="23" y1="11" x2="17" y2="11"></line></svg>
+                )}
+                {type === NodeType.WAIT && (
+                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-cyan-500"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg>
+                )}
+                {type === NodeType.RANDOM && (
+                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-yellow-500"><path d="M18 4l3 3-3 3"></path><path d="M18 20l3-3-3-3"></path><path d="M3 7h3a5 5 0 0 1 5 5 5 5 0 0 0 5 5h5"></path><path d="M21 7h-5a5 5 0 0 0-5 5 5 5 0 0 1-5 5H3"></path></svg>
+                )}
+                {type === NodeType.TELEPORT && (
+                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-indigo-500"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"></path><circle cx="12" cy="10" r="3"></circle></svg>
+                )}
+                {type === NodeType.NPC_CHANGE && (
+                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-teal-500"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path><circle cx="12" cy="7" r="4"></circle><path d="M16 3l2 2-2 2"></path></svg>
+                )}
+                {type === NodeType.SOUND && (
+                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-fuchsia-500"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon><path d="M19.07 4.93a10 10 0 0 1 0 14.14M15.54 8.46a5 5 0 0 1 0 7.07"></path></svg>
                 )}
             </button>
             {/* Tooltip */}
@@ -460,7 +542,12 @@ const NodeEditor: React.FC<NodeEditorProps> = ({ project, setProject }) => {
                  <div onMouseUp={(e) => handlePortMouseUp(node.id, e)} className="w-3 h-3 absolute -left-1.5 top-[14px] bg-zinc-950 border border-zinc-600 hover:border-zinc-100 hover:scale-125 transition-all rotate-45 cursor-crosshair z-30"></div>
               )}
               
-              {(node.type === NodeType.START || node.type === NodeType.SET_VARIABLE || node.type === NodeType.EVENT) && (
+              {(node.type === NodeType.START || node.type === NodeType.SET_VARIABLE || node.type === NodeType.EVENT
+                || node.type === NodeType.GIVE_ITEM || node.type === NodeType.REMOVE_ITEM
+                || node.type === NodeType.GIVE_MONEY || node.type === NodeType.REMOVE_MONEY
+                || node.type === NodeType.ANIMATION || node.type === NodeType.WAIT
+                || node.type === NodeType.TELEPORT || node.type === NodeType.NPC_CHANGE
+                || node.type === NodeType.SOUND) && (
                   <div onMouseDown={(e) => handlePortMouseDown(node.id, 'main', e)} className="w-3 h-3 absolute -right-1.5 top-[14px] bg-zinc-100 border border-zinc-100 hover:scale-125 transition-all rotate-45 cursor-crosshair z-30"></div>
               )}
             </div>
@@ -538,6 +625,104 @@ const NodeEditor: React.FC<NodeEditorProps> = ({ project, setProject }) => {
                       <p className="text-[10px] font-bold text-emerald-500 uppercase tracking-widest">{t('editor.node.start')}</p>
                   </div>
               )}
+
+              {/* GIVE_ITEM */}
+              {node.type === NodeType.GIVE_ITEM && (
+                  <div className="bg-lime-900/10 border border-lime-900/30 p-2 rounded-sm">
+                      <p className="text-[10px] font-mono text-lime-500">
+                          + <span className="text-zinc-200">{node.data.itemCount || 1}x {node.data.itemName || 'item'}</span>
+                      </p>
+                  </div>
+              )}
+
+              {/* REMOVE_ITEM */}
+              {node.type === NodeType.REMOVE_ITEM && (
+                  <div className="bg-orange-900/10 border border-orange-900/30 p-2 rounded-sm">
+                      <p className="text-[10px] font-mono text-orange-500">
+                          - <span className="text-zinc-200">{node.data.itemCount || 1}x {node.data.itemName || 'item'}</span>
+                      </p>
+                  </div>
+              )}
+
+              {/* GIVE_MONEY */}
+              {node.type === NodeType.GIVE_MONEY && (
+                  <div className="bg-green-900/10 border border-green-900/30 p-2 rounded-sm">
+                      <p className="text-[10px] font-mono text-green-500">
+                          + $<span className="text-zinc-200">{node.data.moneyAmount || 0}</span> <span className="text-zinc-500">({node.data.moneyType || 'cash'})</span>
+                      </p>
+                  </div>
+              )}
+
+              {/* REMOVE_MONEY */}
+              {node.type === NodeType.REMOVE_MONEY && (
+                  <div className="bg-red-900/10 border border-red-900/30 p-2 rounded-sm">
+                      <p className="text-[10px] font-mono text-red-500">
+                          - $<span className="text-zinc-200">{node.data.moneyAmount || 0}</span> <span className="text-zinc-500">({node.data.moneyType || 'cash'})</span>
+                      </p>
+                  </div>
+              )}
+
+              {/* ANIMATION */}
+              {node.type === NodeType.ANIMATION && (
+                  <div className="bg-pink-900/10 border border-pink-900/30 p-2 rounded-sm space-y-1">
+                      <p className="text-[10px] font-mono text-pink-500">
+                          <span className="text-zinc-500">{node.data.animTarget || 'npc'}:</span> <span className="text-zinc-200">{node.data.animDict || '...'}</span>
+                      </p>
+                      <p className="text-[10px] font-mono text-zinc-400">{node.data.animName || '...'} <span className="text-zinc-600">({node.data.animDuration || 0}ms)</span></p>
+                  </div>
+              )}
+
+              {/* WAIT */}
+              {node.type === NodeType.WAIT && (
+                  <div className="bg-cyan-900/10 border border-cyan-900/30 p-2 rounded-sm text-center">
+                      <p className="text-[10px] font-mono text-cyan-500">
+                          ⏱ <span className="text-zinc-200">{node.data.waitDuration || 0}ms</span>
+                      </p>
+                  </div>
+              )}
+
+              {/* RANDOM */}
+              {node.type === NodeType.RANDOM && (
+                  <div className="space-y-2">
+                    {node.data.randomOutputs?.map((output, i) => (
+                      <div key={output.id} className="relative flex items-center h-[36px] bg-zinc-900 border border-zinc-800 px-3 rounded-sm group">
+                        <span className="text-[9px] text-zinc-500 font-bold mr-2">0{i+1}</span>
+                        <span className="text-[10px] text-yellow-400 font-mono">{output.weight}%</span>
+                        <div onMouseDown={(e) => handlePortMouseDown(node.id, output.id, e)} className="absolute -right-1.5 w-2.5 h-2.5 bg-zinc-800 border border-yellow-500 hover:bg-yellow-400 hover:border-yellow-400 hover:scale-125 transition-all rotate-45 cursor-crosshair z-30"></div>
+                      </div>
+                    ))}
+                  </div>
+              )}
+
+              {/* TELEPORT */}
+              {node.type === NodeType.TELEPORT && (
+                  <div className="bg-indigo-900/10 border border-indigo-900/30 p-2 rounded-sm">
+                      <p className="text-[10px] font-mono text-indigo-500">
+                          📍 <span className="text-zinc-200">{node.data.teleportCoords?.x?.toFixed(1) || '0'}, {node.data.teleportCoords?.y?.toFixed(1) || '0'}, {node.data.teleportCoords?.z?.toFixed(1) || '0'}</span>
+                      </p>
+                  </div>
+              )}
+
+              {/* NPC_CHANGE */}
+              {node.type === NodeType.NPC_CHANGE && (
+                  <div className="bg-teal-900/10 border border-teal-900/30 p-2 rounded-sm space-y-1">
+                      <p className="text-[10px] font-mono text-teal-500">
+                          → <span className="text-zinc-200">{node.data.newModel || '...'}</span>
+                      </p>
+                      {node.data.newAnimDict && (
+                        <p className="text-[10px] font-mono text-zinc-400">{node.data.newAnimDict}/{node.data.newAnimName}</p>
+                      )}
+                  </div>
+              )}
+
+              {/* SOUND */}
+              {node.type === NodeType.SOUND && (
+                  <div className="bg-fuchsia-900/10 border border-fuchsia-900/30 p-2 rounded-sm">
+                      <p className="text-[10px] font-mono text-fuchsia-500">
+                          🔊 <span className="text-zinc-200">{node.data.soundName || '...'}</span> <span className="text-zinc-600">vol:{node.data.soundVolume || 50}</span>
+                      </p>
+                  </div>
+              )}
             </div>
           </div>
         ))}
@@ -597,6 +782,12 @@ const NodeEditor: React.FC<NodeEditorProps> = ({ project, setProject }) => {
                                      <button onClick={() => removeChoice(selectedNodeId, c.id)} className="text-zinc-600 hover:text-rose-500">×</button>
                                  </div>
                              ))}
+                        </div>
+                        {/* Per-dialogue animation (user suggestion) */}
+                        <div className="space-y-3 pt-4 border-t border-zinc-900">
+                            <label className="text-[9px] font-black text-zinc-600 uppercase tracking-widest">{t('editor.dialogue_anim')}</label>
+                            <input type="text" value={node.data.animDict || ''} onChange={(e) => updateData('animDict', e.target.value)} className="w-full bg-zinc-900 border-b border-zinc-800 py-2 text-[11px] font-mono text-zinc-300 focus:outline-none focus:border-zinc-400" placeholder={t('editor.anim_dict')} />
+                            <input type="text" value={node.data.animName || ''} onChange={(e) => updateData('animName', e.target.value)} className="w-full bg-zinc-900 border-b border-zinc-800 py-2 text-[11px] font-mono text-zinc-300 focus:outline-none focus:border-zinc-400" placeholder={t('editor.anim_name')} />
                         </div>
                     </>
                 );
@@ -686,6 +877,136 @@ const NodeEditor: React.FC<NodeEditorProps> = ({ project, setProject }) => {
                           placeholder={t('editor.coord_w_heading')}
                         />
                       </div>
+                    </div>
+                  </>
+                );
+
+                if (node.type === NodeType.GIVE_ITEM || node.type === NodeType.REMOVE_ITEM) return (
+                  <>
+                    <div className="space-y-3">
+                      <label className="text-[9px] font-black text-zinc-600 uppercase tracking-widest">{t('editor.item_name')}</label>
+                      <input type="text" value={node.data.itemName || ''} onChange={(e) => updateData('itemName', e.target.value)} className="w-full bg-zinc-900 border-b border-zinc-800 py-2 text-[11px] font-mono text-zinc-300 focus:outline-none focus:border-zinc-400" placeholder="bread" />
+                    </div>
+                    <div className="space-y-3">
+                      <label className="text-[9px] font-black text-zinc-600 uppercase tracking-widest">{t('editor.item_count')}</label>
+                      <input type="number" min={1} value={node.data.itemCount ?? 1} onChange={(e) => updateData('itemCount', Math.max(1, parseInt(e.target.value) || 1))} className="w-full bg-zinc-900 border-b border-zinc-800 py-2 text-[11px] font-mono text-zinc-300 focus:outline-none focus:border-zinc-400" />
+                    </div>
+                  </>
+                );
+
+                if (node.type === NodeType.GIVE_MONEY || node.type === NodeType.REMOVE_MONEY) return (
+                  <>
+                    <div className="space-y-3">
+                      <label className="text-[9px] font-black text-zinc-600 uppercase tracking-widest">{t('editor.money_type')}</label>
+                      <select value={node.data.moneyType || 'cash'} onChange={(e) => updateData('moneyType', e.target.value)} className="w-full bg-zinc-900 border-b border-zinc-800 py-2 text-[11px] font-mono text-zinc-300 focus:outline-none">
+                        <option value="cash">Cash</option>
+                        <option value="bank">Bank</option>
+                      </select>
+                    </div>
+                    <div className="space-y-3">
+                      <label className="text-[9px] font-black text-zinc-600 uppercase tracking-widest">{t('editor.money_amount')}</label>
+                      <input type="number" min={0} value={node.data.moneyAmount ?? 0} onChange={(e) => updateData('moneyAmount', Math.max(0, parseInt(e.target.value) || 0))} className="w-full bg-zinc-900 border-b border-zinc-800 py-2 text-[11px] font-mono text-zinc-300 focus:outline-none focus:border-zinc-400" />
+                    </div>
+                  </>
+                );
+
+                if (node.type === NodeType.ANIMATION) return (
+                  <>
+                    <div className="space-y-3">
+                      <label className="text-[9px] font-black text-zinc-600 uppercase tracking-widest">{t('editor.anim_dict')}</label>
+                      <input type="text" value={node.data.animDict || ''} onChange={(e) => updateData('animDict', e.target.value)} className="w-full bg-zinc-900 border-b border-zinc-800 py-2 text-[11px] font-mono text-zinc-300 focus:outline-none focus:border-zinc-400" />
+                    </div>
+                    <div className="space-y-3">
+                      <label className="text-[9px] font-black text-zinc-600 uppercase tracking-widest">{t('editor.anim_name')}</label>
+                      <input type="text" value={node.data.animName || ''} onChange={(e) => updateData('animName', e.target.value)} className="w-full bg-zinc-900 border-b border-zinc-800 py-2 text-[11px] font-mono text-zinc-300 focus:outline-none focus:border-zinc-400" />
+                    </div>
+                    <div className="space-y-3">
+                      <label className="text-[9px] font-black text-zinc-600 uppercase tracking-widest">{t('editor.anim_target')}</label>
+                      <select value={node.data.animTarget || 'npc'} onChange={(e) => updateData('animTarget', e.target.value)} className="w-full bg-zinc-900 border-b border-zinc-800 py-2 text-[11px] font-mono text-zinc-300 focus:outline-none">
+                        <option value="npc">{t('editor.anim_target_npc')}</option>
+                        <option value="player">{t('editor.anim_target_player')}</option>
+                      </select>
+                    </div>
+                    <div className="space-y-3">
+                      <label className="text-[9px] font-black text-zinc-600 uppercase tracking-widest">{t('editor.anim_duration')}</label>
+                      <input type="number" min={0} value={node.data.animDuration ?? 3000} onChange={(e) => updateData('animDuration', Math.max(0, parseInt(e.target.value) || 0))} className="w-full bg-zinc-900 border-b border-zinc-800 py-2 text-[11px] font-mono text-zinc-300 focus:outline-none focus:border-zinc-400" />
+                    </div>
+                  </>
+                );
+
+                if (node.type === NodeType.WAIT) return (
+                  <div className="space-y-3">
+                    <label className="text-[9px] font-black text-zinc-600 uppercase tracking-widest">{t('editor.wait_duration')}</label>
+                    <input type="number" min={0} value={node.data.waitDuration ?? 2000} onChange={(e) => updateData('waitDuration', Math.max(0, parseInt(e.target.value) || 0))} className="w-full bg-zinc-900 border-b border-zinc-800 py-2 text-[11px] font-mono text-zinc-300 focus:outline-none focus:border-zinc-400" />
+                  </div>
+                );
+
+                if (node.type === NodeType.RANDOM) return (
+                  <div className="space-y-4">
+                    <div className="flex justify-between">
+                      <label className="text-[9px] font-black text-zinc-600 uppercase tracking-widest">{t('editor.random_outputs')}</label>
+                      <button onClick={() => {
+                        const outputs = [...(node.data.randomOutputs || []), { id: `ro-${generateUUID()}`, weight: 50 }];
+                        updateData('randomOutputs', outputs);
+                      }} className="text-[9px] font-bold text-zinc-400 hover:text-white">{t('editor.add')}</button>
+                    </div>
+                    {node.data.randomOutputs?.map((output, i) => (
+                      <div key={output.id} className="flex gap-2 items-center">
+                        <span className="text-[9px] text-zinc-500 font-bold">0{i+1}</span>
+                        <input type="number" min={0} max={100} value={output.weight} onChange={(e) => {
+                          const outputs = node.data.randomOutputs?.map(o => o.id === output.id ? { ...o, weight: Math.max(0, parseInt(e.target.value) || 0) } : o);
+                          updateData('randomOutputs', outputs);
+                        }} className="flex-1 bg-zinc-900 border-b border-zinc-800 text-[10px] py-1 text-zinc-300 focus:outline-none" />
+                        <span className="text-[9px] text-zinc-500">%</span>
+                        <button onClick={() => {
+                          saveToHistory();
+                          const outputs = node.data.randomOutputs?.filter(o => o.id !== output.id);
+                          const newConns = project.connections.filter(c => !(c.fromNodeId === node.id && c.fromPort === output.id));
+                          setProject(prev => ({ ...prev, nodes: prev.nodes.map(n => n.id === node.id ? { ...n, data: { ...n.data, randomOutputs: outputs } } : n), connections: newConns }));
+                        }} className="text-zinc-600 hover:text-rose-500">×</button>
+                      </div>
+                    ))}
+                  </div>
+                );
+
+                if (node.type === NodeType.TELEPORT) return (
+                  <div className="space-y-3">
+                    <label className="text-[9px] font-black text-zinc-600 uppercase tracking-widest">{t('editor.teleport_coords')}</label>
+                    <div className="grid grid-cols-2 gap-3">
+                      <input type="number" value={node.data.teleportCoords?.x ?? ''} onChange={(e) => updateData('teleportCoords', { ...node.data.teleportCoords, x: Number(e.target.value) })} className="w-full bg-zinc-900 border-b border-zinc-800 py-2 text-[11px] font-mono text-zinc-300 focus:outline-none focus:border-zinc-400" placeholder="X" />
+                      <input type="number" value={node.data.teleportCoords?.y ?? ''} onChange={(e) => updateData('teleportCoords', { ...node.data.teleportCoords, y: Number(e.target.value) })} className="w-full bg-zinc-900 border-b border-zinc-800 py-2 text-[11px] font-mono text-zinc-300 focus:outline-none focus:border-zinc-400" placeholder="Y" />
+                      <input type="number" value={node.data.teleportCoords?.z ?? ''} onChange={(e) => updateData('teleportCoords', { ...node.data.teleportCoords, z: Number(e.target.value) })} className="w-full bg-zinc-900 border-b border-zinc-800 py-2 text-[11px] font-mono text-zinc-300 focus:outline-none focus:border-zinc-400" placeholder="Z" />
+                      <input type="number" value={node.data.teleportCoords?.w ?? ''} onChange={(e) => updateData('teleportCoords', { ...node.data.teleportCoords, w: Number(e.target.value) })} className="w-full bg-zinc-900 border-b border-zinc-800 py-2 text-[11px] font-mono text-zinc-300 focus:outline-none focus:border-zinc-400" placeholder={t('editor.coord_w_heading')} />
+                    </div>
+                  </div>
+                );
+
+                if (node.type === NodeType.NPC_CHANGE) return (
+                  <>
+                    <div className="space-y-3">
+                      <label className="text-[9px] font-black text-zinc-600 uppercase tracking-widest">{t('editor.new_model')}</label>
+                      <input type="text" value={node.data.newModel || ''} onChange={(e) => updateData('newModel', e.target.value)} className="w-full bg-zinc-900 border-b border-zinc-800 py-2 text-[11px] font-mono text-zinc-300 focus:outline-none focus:border-zinc-400" placeholder="a_m_y_business_01" />
+                    </div>
+                    <div className="space-y-3">
+                      <label className="text-[9px] font-black text-zinc-600 uppercase tracking-widest">{t('editor.new_anim_dict')}</label>
+                      <input type="text" value={node.data.newAnimDict || ''} onChange={(e) => updateData('newAnimDict', e.target.value)} className="w-full bg-zinc-900 border-b border-zinc-800 py-2 text-[11px] font-mono text-zinc-300 focus:outline-none focus:border-zinc-400" />
+                    </div>
+                    <div className="space-y-3">
+                      <label className="text-[9px] font-black text-zinc-600 uppercase tracking-widest">{t('editor.new_anim_name')}</label>
+                      <input type="text" value={node.data.newAnimName || ''} onChange={(e) => updateData('newAnimName', e.target.value)} className="w-full bg-zinc-900 border-b border-zinc-800 py-2 text-[11px] font-mono text-zinc-300 focus:outline-none focus:border-zinc-400" />
+                    </div>
+                  </>
+                );
+
+                if (node.type === NodeType.SOUND) return (
+                  <>
+                    <div className="space-y-3">
+                      <label className="text-[9px] font-black text-zinc-600 uppercase tracking-widest">{t('editor.sound_name')}</label>
+                      <input type="text" value={node.data.soundName || ''} onChange={(e) => updateData('soundName', e.target.value)} className="w-full bg-zinc-900 border-b border-zinc-800 py-2 text-[11px] font-mono text-zinc-300 focus:outline-none focus:border-zinc-400" />
+                    </div>
+                    <div className="space-y-3">
+                      <label className="text-[9px] font-black text-zinc-600 uppercase tracking-widest">{t('editor.sound_volume')}</label>
+                      <input type="number" min={0} max={100} value={node.data.soundVolume ?? 50} onChange={(e) => updateData('soundVolume', Math.min(100, Math.max(0, parseInt(e.target.value) || 0)))} className="w-full bg-zinc-900 border-b border-zinc-800 py-2 text-[11px] font-mono text-zinc-300 focus:outline-none focus:border-zinc-400" />
                     </div>
                   </>
                 );

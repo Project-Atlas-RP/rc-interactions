@@ -5,13 +5,28 @@ export enum NodeType {
   CONDITION = 'CONDITION',
   SET_VARIABLE = 'SET_VARIABLE',
   EVENT = 'EVENT',
-  END = 'END'
+  END = 'END',
+  GIVE_ITEM = 'GIVE_ITEM',
+  REMOVE_ITEM = 'REMOVE_ITEM',
+  GIVE_MONEY = 'GIVE_MONEY',
+  REMOVE_MONEY = 'REMOVE_MONEY',
+  ANIMATION = 'ANIMATION',
+  WAIT = 'WAIT',
+  RANDOM = 'RANDOM',
+  TELEPORT = 'TELEPORT',
+  NPC_CHANGE = 'NPC_CHANGE',
+  SOUND = 'SOUND'
 }
 
 export interface Choice {
   id: string;
   text: string;
   nextNodeId: string | null;
+}
+
+export interface RandomOutput {
+  id: string;
+  weight: number;
 }
 
 export interface NodePosition {
@@ -39,6 +54,10 @@ export interface DialogueNode {
     npcName?: string;
     text?: string;
     choices?: Choice[];
+
+    // Per-dialogue animation (user suggestion: custom anim per dialogue node)
+    animDict?: string;
+    animName?: string;
     
     // Logic Data
     variableName?: string;
@@ -48,6 +67,36 @@ export interface DialogueNode {
     // Event Data
     eventName?: string;
     eventPayload?: string;
+
+    // GIVE_ITEM / REMOVE_ITEM
+    itemName?: string;
+    itemCount?: number;
+
+    // GIVE_MONEY / REMOVE_MONEY
+    moneyType?: 'cash' | 'bank';
+    moneyAmount?: number;
+
+    // ANIMATION node
+    animTarget?: 'npc' | 'player';
+    animDuration?: number;
+
+    // WAIT node
+    waitDuration?: number;
+
+    // RANDOM node
+    randomOutputs?: RandomOutput[];
+
+    // TELEPORT node
+    teleportCoords?: WorldCoords;
+
+    // NPC_CHANGE node
+    newModel?: string;
+    newAnimDict?: string;
+    newAnimName?: string;
+
+    // SOUND node
+    soundName?: string;
+    soundVolume?: number;
   };
 }
 

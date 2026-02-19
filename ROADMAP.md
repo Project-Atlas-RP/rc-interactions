@@ -47,16 +47,16 @@ Currently the system has 6 node types: `START`, `DIALOGUE`, `CONDITION`, `SET_VA
 
 | # | Node | Description | Ports | Status |
 |---|------|-------------|-------|--------|
-| 2.1 | **`GIVE_ITEM`** | Give item(s) to the player. `Bridge.AddItem` already exists but no node uses it. Config: item name, count. | 1 out (`main`) | ⬜ Todo |
-| 2.2 | **`REMOVE_ITEM`** | Remove item(s) from the player. `Bridge.RemoveItem` already exists. Config: item name, count. | 1 out (`main`) | ⬜ Todo |
-| 2.3 | **`GIVE_MONEY`** | Give money to the player. Config: money type (`cash`/`bank`), amount. Uses `Bridge.AddMoney`. | 1 out (`main`) | ⬜ Todo |
-| 2.4 | **`REMOVE_MONEY`** | Remove money from the player. Config: money type, amount. Uses `Bridge.RemoveMoney`. | 1 out (`main`) | ⬜ Todo |
-| 2.5 | **`ANIMATION`** | Play a specific animation on the NPC or player mid-conversation. Config: anim dict, anim name, target (npc/player), duration. | 1 out (`main`) | ⬜ Todo |
-| 2.6 | **`WAIT`** | Timed pause before continuing to the next node. Config: duration in ms. Useful for dramatic pacing. | 1 out (`main`) | ⬜ Todo |
-| 2.7 | **`RANDOM`** | Random branching with configurable percentages. Config: N outputs with weight values (e.g., 70%/30%). | N out (weighted) | ⬜ Todo |
-| 2.8 | **`TELEPORT`** | Move the player to specific coordinates after a dialogue. Config: x, y, z, heading. | 1 out (`main`) | ⬜ Todo |
-| 2.9 | **`NPC_CHANGE`** | Change the NPC model/animation mid-conversation (for multi-character scenes). Config: new model, optional animation. | 1 out (`main`) | ⬜ Todo |
-| 2.10 | **`SOUND`** | Play a sound effect during dialogue. Config: sound name/file, volume. | 1 out (`main`) | ⬜ Todo |
+| 2.1 | **`GIVE_ITEM`** | Give item(s) to the player. `Bridge.AddItem` already exists but no node uses it. Config: item name, count. | 1 out (`main`) | ✅ Done |
+| 2.2 | **`REMOVE_ITEM`** | Remove item(s) from the player. `Bridge.RemoveItem` already exists. Config: item name, count. | 1 out (`main`) | ✅ Done |
+| 2.3 | **`GIVE_MONEY`** | Give money to the player. Config: money type (`cash`/`bank`), amount. Uses `Bridge.AddMoney`. | 1 out (`main`) | ✅ Done |
+| 2.4 | **`REMOVE_MONEY`** | Remove money from the player. Config: money type, amount. Uses `Bridge.RemoveMoney`. | 1 out (`main`) | ✅ Done |
+| 2.5 | **`ANIMATION`** | Play a specific animation on the NPC or player mid-conversation. Config: anim dict, anim name, target (npc/player), duration. Also: per-DIALOGUE-node animation fields (animDict/animName) for custom NPC reactions per response. | 1 out (`main`) | ✅ Done |
+| 2.6 | **`WAIT`** | Timed pause before continuing to the next node. Config: duration in ms. Useful for dramatic pacing. | 1 out (`main`) | ✅ Done |
+| 2.7 | **`RANDOM`** | Random branching with configurable percentages. Config: N outputs with weight values (e.g., 70%/30%). | N out (weighted) | ✅ Done |
+| 2.8 | **`TELEPORT`** | Move the player to specific coordinates after a dialogue. Config: x, y, z, heading. | 1 out (`main`) | ✅ Done |
+| 2.9 | **`NPC_CHANGE`** | Change the NPC model/animation mid-conversation (for multi-character scenes). Config: new model, optional animation. | 1 out (`main`) | ✅ Done |
+| 2.10 | **`SOUND`** | Play a sound effect during dialogue. Config: sound name/file, volume. | 1 out (`main`) | ✅ Done |
 
 ### Implementation notes for new nodes
 
