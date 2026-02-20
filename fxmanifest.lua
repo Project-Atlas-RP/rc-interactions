@@ -4,7 +4,7 @@ lua54 'yes'
 
 author 'RealCity Developments - xByMarcos - <https://realcity.dev>'
 description 'Modular Interaction System for FiveM'
-version '1.0.1'
+version '1.1.0'
 
 -- Shared Scripts
 shared_scripts {

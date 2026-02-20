@@ -1,7 +1,7 @@
 # RC-Interactions — Roadmap
 
-> Last updated: February 13, 2026  
-> Status: **Active Development**
+> Last updated: February 20, 2026  
+> Status: **Active Development** — v1.1.0 released
 
 This document outlines the planned evolution of `rc-interactions`, organized by priority phases. Each phase contains specific tasks with status tracking.
 
@@ -76,13 +76,13 @@ Each new node requires changes in **4 locations**:
 
 | # | Feature | Description | Status |
 |---|---------|-------------|--------|
-| 3.1 | **Keyboard shortcuts** | `Ctrl+Z`/`Ctrl+Y` (undo/redo), `Ctrl+S` (save), `Delete` (remove node), `Ctrl+D` (duplicate node). Currently only the toolbar buttons work. | ⬜ Todo |
+| 3.1 | **Keyboard shortcuts** | `Ctrl+Z`/`Ctrl+Y` (undo/redo), `Ctrl+S` (save), `Delete` (remove node), `Ctrl+D` (duplicate node), `Ctrl+L` (auto-layout), `Ctrl+K` (command palette). | ✅ Done |
 | 3.2 | **Copy/Paste nodes** | Select one or multiple nodes and duplicate them with their internal connections preserved. | ⬜ Todo |
-| 3.3 | **Multi-selection** | Shift+click or drag-rectangle to select multiple nodes for bulk move/delete. | ⬜ Todo |
+| 3.3 | **Multi-selection** | Ctrl+click toggle + drag-rectangle (marquee) to select multiple nodes for bulk move/delete/duplicate. | ✅ Done |
 | 3.4 | **Snap-to-grid** | Optional grid alignment to keep the canvas organized. Toggle on/off. | ⬜ Todo |
 | 3.5 | **Minimap** | Small overview of the full graph for navigation in large projects. | ⬜ Todo |
 | 3.6 | **Visual validation** | Highlight disconnected nodes, detect multiple START nodes, detect infinite loops, warn about nodes with no output connections. | ⬜ Todo |
-| 3.7 | **Auto-layout** | Button to automatically reorganize nodes using a graph layout algorithm (dagre/elk style). | ⬜ Todo |
+| 3.7 | **Auto-layout** | Hierarchical Sugiyama-lite algorithm with BFS layering, median heuristic crossing minimization, and cycle protection. Accessible via toolbar button or Ctrl+L. | ✅ Done |
 | 3.8 | **Auto-save** | Automatically save every N seconds with a visual "unsaved changes" indicator (●) in the header. | ⬜ Todo |
 | 3.9 | **Search in editor** | Search nodes by text content or NPC name within the canvas. Jump to matching node. | ⬜ Todo |
 | 3.10 | **Comment nodes** | A "note" node type that doesn't affect the flow but allows documenting sections of the graph. | ⬜ Todo |
@@ -102,7 +102,7 @@ Each new node requires changes in **4 locations**:
 | 4.4 | **Multiple camera angles** | Configurable camera angles per DIALOGUE node: close-up, lateral, over-the-shoulder, wide shot. | ⬜ Todo |
 | 4.5 | **Player animations** | The player character should also play a "listening" or "talking" animation during the interaction. | ⬜ Todo |
 | 4.6 | **Proximity fallback (no target)** | When `Config.UseTarget = false`, there is currently no fallback implemented. Implement TextUI/DrawText with distance detection loop. | ⬜ Todo |
-| 4.7 | **Interaction cooldowns** | Prevent players from spamming the same interaction repeatedly. Config: cooldown time per interaction. | ⬜ Todo |
+| 4.7 | **Interaction cooldowns** | Server-side per-node cooldowns (3s) and global economy cooldown (1s) prevent exploitation. Active session tracking with automatic cleanup. | ✅ Done |
 | 4.8 | **Per-player progress** | Store in the database which interactions each player has completed. Enable non-repeatable or branching flows based on prior completions. | ⬜ Todo |
 
 ---
@@ -161,15 +161,15 @@ Currently `SET_VARIABLE` and `CONDITION` only work with local ephemeral memory t
 
 ## Implementation Timeline
 
-| Period | Focus | Phases |
-|--------|-------|--------|
-| **Weeks 1–2** | Critical bug fixes | Phase 1 (HasItem, GetMoney, HasGroup, UUIDs, i18n) |
-| **Weeks 3–4** | Core missing features | Phase 4.6 (proximity fallback) + Phase 3.1, 3.8 (shortcuts, auto-save) |
-| **Weeks 5–8** | New node types | Phase 2 (GIVE_ITEM, GIVE_MONEY, WAIT, RANDOM, ANIMATION) |
-| **Weeks 9–10** | Editor power features | Phase 3 (copy/paste, multi-selection, validation) |
-| **Weeks 11–14** | Runtime polish | Phase 4 (skip typewriter, history, avatar, cooldowns) |
-| **Weeks 15–18** | Advanced state | Phase 5 (persistent variables, compound conditions) |
-| **Month 5+** | Long-term quality | Phase 6 & 7 (infrastructure, tests, documentation, themes) |
+| Period | Focus | Phases | Status |
+|--------|-------|--------|--------|
+| **Weeks 1–2** | Critical bug fixes | Phase 1 (HasItem, GetMoney, HasGroup, UUIDs, i18n) | ✅ Complete |
+| **Weeks 3–4** | Core missing features | Phase 4.7 (cooldowns) + Phase 3.1, 3.3, 3.7 (shortcuts, multi-select, auto-layout) | ✅ Complete |
+| **Weeks 5–8** | New node types | Phase 2 (all 10 nodes) | ✅ Complete |
+| **Weeks 9–10** | Editor power features | Phase 3 remaining (copy/paste, validation, minimap) | ⬜ Pending |
+| **Weeks 11–14** | Runtime polish | Phase 4 remaining (skip typewriter, history, avatar, cameras) | ⬜ Pending |
+| **Weeks 15–18** | Advanced state | Phase 5 (persistent variables, compound conditions) | ⬜ Pending |
+| **Month 5+** | Long-term quality | Phase 6 & 7 (infrastructure, documentation, themes) | ⬜ Pending |
 
 ---
 
@@ -200,7 +200,7 @@ When implementing any node from Phase 2, these files must be modified:
 | `Notify` (server) | ✅ | ✅ | ✅ Fallback |
 | `GetMoney` | ✅ Client + Server | ✅ Client + Server | ✅ Stub (override) |
 | `GetJob` / `GetGang` | ❌ Not implemented | ❌ Not implemented | ❌ Not implemented |
-| `AddItem` / `RemoveItem` | ✅ | ✅ | ✅ Stubs |
+| `AddItem` / `RemoveItem` | ✅ ox→qb-inv→legacy | ✅ | ✅ Stubs |
 | `AddMoney` / `RemoveMoney` | ✅ | ✅ (cash/bank only) | ✅ Stubs |
 
 ---
