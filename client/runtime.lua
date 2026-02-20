@@ -159,6 +159,19 @@ function SetupInteraction(project)
     SetEntityInvincible(ped, true)
     SetBlockingOfNonTemporaryEvents(ped, true)
     
+    -- Play idle animation from START node (if configured)
+    if startNode.data.animDict and startNode.data.animName
+       and startNode.data.animDict ~= '' and startNode.data.animName ~= '' then
+        local idleDict = startNode.data.animDict
+        local idleAnim = startNode.data.animName
+        RequestAnimDict(idleDict)
+        local t = 0
+        while not HasAnimDictLoaded(idleDict) and t < 1000 do Wait(10) t = t + 10 end
+        if HasAnimDictLoaded(idleDict) then
+            TaskPlayAnim(ped, idleDict, idleAnim, 8.0, -8.0, -1, 1, 0, false, false, false)
+        end
+    end
+
     SpawnedEntities[project.id] = ped
     
     -- Setup Interaction (Target or TextUI)

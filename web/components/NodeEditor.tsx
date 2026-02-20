@@ -984,7 +984,14 @@ const NodeEditor: React.FC<NodeEditorProps> = ({ project, setProject }) => {
 
               {/* START */}
               {node.type === NodeType.START && (
-                <div className="text-center py-2"><p className="text-[10px] font-bold text-emerald-500 uppercase tracking-widest">{t('editor.node.start')}</p></div>
+                <div className="space-y-2">
+                  <div className="text-center py-1"><p className="text-[10px] font-bold text-emerald-500 uppercase tracking-widest">{t('editor.node.start')}</p></div>
+                  {node.data.animDict && node.data.animName && (
+                    <div className="bg-emerald-900/10 border border-emerald-900/30 p-2 rounded-sm">
+                      <p className="text-[9px] font-mono text-emerald-400 truncate">🎭 {node.data.animDict}/{node.data.animName}</p>
+                    </div>
+                  )}
+                </div>
               )}
 
               {/* GIVE_ITEM */}
@@ -1467,6 +1474,12 @@ const NodeEditor: React.FC<NodeEditorProps> = ({ project, setProject }) => {
                       <input type="number" value={node.data.coords?.z ?? ''} onChange={e => updateCoords({ z: Number(e.target.value) })} className="w-full bg-zinc-900 border border-zinc-800 rounded-md px-3 py-2 text-[11px] font-mono text-zinc-300 focus:outline-none focus:border-zinc-600 transition-colors" placeholder="Z" />
                       <input type="number" value={node.data.coords?.w ?? ''} onChange={e => updateCoords({ w: Number(e.target.value) })} className="w-full bg-zinc-900 border border-zinc-800 rounded-md px-3 py-2 text-[11px] font-mono text-zinc-300 focus:outline-none focus:border-zinc-600 transition-colors" placeholder={t('editor.coord_w_heading')} />
                     </div>
+                  </div>
+                  <div className="border-t border-zinc-800/50 pt-3 space-y-2">
+                    <label className="text-[9px] font-black text-zinc-600 uppercase tracking-widest">{t('editor.idle_animation')}</label>
+                    <input type="text" value={node.data.animDict || ''} onChange={e => updateData('animDict', e.target.value)} className="w-full bg-zinc-900 border border-zinc-800 rounded-md px-3 py-2 text-[11px] font-mono text-zinc-300 focus:outline-none focus:border-zinc-600 transition-colors" placeholder={t('editor.anim_dict_placeholder')} />
+                    <input type="text" value={node.data.animName || ''} onChange={e => updateData('animName', e.target.value)} className="w-full bg-zinc-900 border border-zinc-800 rounded-md px-3 py-2 text-[11px] font-mono text-zinc-300 focus:outline-none focus:border-zinc-600 transition-colors" placeholder={t('editor.anim_name_placeholder')} />
+                    <p className="text-[9px] text-zinc-600 italic">{t('editor.idle_animation_hint')}</p>
                   </div>
                 </>
               );
