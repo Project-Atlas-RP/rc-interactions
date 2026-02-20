@@ -196,7 +196,7 @@ function SetupInteraction(project)
     end
 end
 
-function StartInteraction(project)
+function StartInteraction(project, customVars)
     -- Find Start Node
     local startNode = nil
     for _, node in ipairs(project.data.nodes) do
@@ -204,6 +204,17 @@ function StartInteraction(project)
     end
     
     if startNode then
+        -- Reset interaction memory and inject custom variables
+        InteractionMemory = {}
+        if customVars and type(customVars) == 'table' then
+            for k, v in pairs(customVars) do
+                InteractionMemory[k] = tostring(v)
+            end
+            if Config.Debug then
+                print('[RC-Interactions] Injected custom variables: ' .. json.encode(customVars))
+            end
+        end
+
         -- Notify server that this player is starting a session (security)
         TriggerServerEvent('rc-interactions:server:startSession', project.id)
 
@@ -506,14 +517,104 @@ function ProcessNode(project, node)
     end
 end
 
+-- ══════════════════════════════════════════════════════════
+-- GetPlayerVariable(name)
+-- Resolves a player:<name> variable to a runtime value.
+-- Returns number | string | boolean | nil
+-- ══════════════════════════════════════════════════════════
+function GetPlayerVariable(name)
+    local ped = PlayerPedId()
+
+    -- ── GTA native values ──
+    if name == 'health'      then return GetEntityHealth(ped) end
+    if name == 'armor'       then return GetPedArmour(ped) end
+    if name == 'stamina'     then return math.floor(100.0 - GetPlayerSprintStaminaRemaining(PlayerId())) end
+    if name == 'is_dead'     then return IsEntityDead(ped) end
+    if name == 'is_wanted'   then return GetPlayerWantedLevel(PlayerId()) end
+    if name == 'in_vehicle'  then return IsPedInAnyVehicle(ped, false) end
+    if name == 'speed'       then return math.floor(GetEntitySpeed(ped) * 3.6) end -- km/h
+    if name == 'weapon'      then
+        local _, hash = GetCurrentPedWeapon(ped)
+        return tostring(hash)
+    end
+    if name == 'is_swimming' then return IsPedSwimming(ped) end
+    if name == 'is_falling'  then return IsPedFalling(ped) end
+    if name == 'is_running'  then return IsPedRunning(ped) end
+
+    -- ── Framework-dependent values ──
+    if Bridge.Framework == 'qbcore' then
+        local QBCore = exports['qb-core']:GetCoreObject()
+        local pData = QBCore.Functions.GetPlayerData()
+        if not pData then return nil end
+
+        if name == 'name'         then return (pData.charinfo and (pData.charinfo.firstname .. ' ' .. pData.charinfo.lastname)) or 'Unknown' end
+        if name == 'job_name'     then return pData.job and pData.job.name or 'unemployed' end
+        if name == 'job_grade'    then return pData.job and pData.job.grade and pData.job.grade.level or 0 end
+        if name == 'gang_name'    then return pData.gang and pData.gang.name or 'none' end
+        if name == 'citizenid'    then return pData.citizenid or '' end
+        if name == 'gender'       then return pData.charinfo and pData.charinfo.gender or 0 end
+        if name == 'phone_number' then return pData.charinfo and pData.charinfo.phone or '' end
+
+    elseif Bridge.Framework == 'esx' then
+        local pData = Bridge.ESX and Bridge.ESX.GetPlayerData and Bridge.ESX.GetPlayerData()
+        if not pData then return nil end
+
+        if name == 'name'         then
+            return (pData.firstName or '') .. ' ' .. (pData.lastName or '')
+        end
+        if name == 'job_name'     then return pData.job and pData.job.name or 'unemployed' end
+        if name == 'job_grade'    then return pData.job and pData.job.grade or 0 end
+        if name == 'gang_name'    then return 'none' end -- ESX no tiene gangs por defecto
+        if name == 'citizenid'    then return pData.identifier or '' end
+        if name == 'gender'       then return pData.sex or 'unknown' end
+        if name == 'phone_number' then return pData.phoneNumber or '' end
+    end
+
+    return nil
+end
+
+-- ══════════════════════════════════════════════════════════
+-- ResolveVariable(key)
+-- Resolves any variable key to its runtime value as a string.
+-- Supports: player:X, money:X, item:X, job:X, and plain memory keys.
+-- ══════════════════════════════════════════════════════════
+function ResolveVariable(key)
+    if not key or key == '' then return '' end
+    local varType, varName = key:match("([^:]+):(.+)")
+    if not varType then
+        -- Plain memory variable
+        return InteractionMemory[key] or ''
+    end
+    if varType == 'player' then
+        local val = GetPlayerVariable(varName)
+        if type(val) == 'boolean' then return val and '1' or '0' end
+        return tostring(val or '')
+    elseif varType == 'money' then
+        return tostring(Bridge.GetMoney(GetPlayerServerId(PlayerId()), varName) or 0)
+    elseif varType == 'item' then
+        return Bridge.HasItem(GetPlayerServerId(PlayerId()), varName, 1) and '1' or '0'
+    elseif varType == 'job' then
+        return Bridge.HasGroup(GetPlayerServerId(PlayerId()), varName) and '1' or '0'
+    end
+    return ''
+end
+
 function CheckCondition(data)
     if not data then return false end
+
+    -- ── Resolve the target value (supports $varRef) ──
+    local rawTarget = data.variableValue or ''
+    local resolvedTarget = rawTarget
+    if rawTarget:sub(1, 1) == '$' then
+        local refKey = rawTarget:sub(2)
+        resolvedTarget = tostring(ResolveVariable(refKey))
+    end
     
     local varType, varName = data.variableName:match("([^:]+):(.+)")
     if not varType then 
         -- Fallback: check InteractionMemory for simple variables (set by SET_VARIABLE nodes)
         local memValue = InteractionMemory[data.variableName] or ''
-        local targetValue = data.variableValue or ''
+        local targetValue = resolvedTarget
         local op = data.conditionOperator or '=='
 
         local numA = tonumber(memValue)
@@ -532,7 +633,7 @@ function CheckCondition(data)
     end
 
     local currentValue = nil
-    local targetValue = tonumber(data.variableValue) or data.variableValue
+    local targetValue = tonumber(resolvedTarget) or resolvedTarget
 
     if varType == 'item' then
         currentValue = Bridge.HasItem(GetPlayerServerId(PlayerId()), varName, 1) and 1 or 0
@@ -568,6 +669,36 @@ function CheckCondition(data)
         
     elseif varType == 'job' then
         return Bridge.HasGroup(GetPlayerServerId(PlayerId()), varName)
+
+    elseif varType == 'player' then
+        -- Resolve player property from GTA natives or framework data
+        currentValue = GetPlayerVariable(varName)
+        if currentValue == nil then return false end
+
+        local op = data.conditionOperator or '=='
+        local targetStr = resolvedTarget
+
+        -- Normalize booleans to "1"/"0" strings
+        if type(currentValue) == 'boolean' then
+            currentValue = currentValue and '1' or '0'
+        else
+            currentValue = tostring(currentValue)
+        end
+
+        local numA = tonumber(currentValue)
+        local numB = tonumber(targetStr)
+        local isNumeric = numA ~= nil and numB ~= nil
+
+        if op == '==' then
+            return isNumeric and numA == numB or currentValue == targetStr
+        elseif op == '!=' then
+            return isNumeric and numA ~= numB or currentValue ~= targetStr
+        elseif op == '>'  then return isNumeric and numA > numB or false
+        elseif op == '<'  then return isNumeric and numA < numB or false
+        elseif op == '>=' then return isNumeric and numA >= numB or false
+        elseif op == '<=' then return isNumeric and numA <= numB or false
+        end
+        return false
     end
 
     return false
@@ -637,8 +768,14 @@ RegisterNUICallback('cancelInteraction', function(data, cb)
     cb('ok')
 end)
 
--- Public API: allow other scripts to start a flow by UUID without the editor
-function StartInteractionById(projectId)
+-- Public API: allow other scripts to start a flow by UUID without the editor.
+-- customVars (optional table) — key/value pairs injected into InteractionMemory
+-- before the flow starts so CONDITION nodes can reference them.
+--
+-- Usage:
+--   exports['rc-interactions']:StartInteractionById('uuid', { quest_stage = '3', rank = 'gold' })
+--   TriggerEvent('rc-interactions:client:startInteractionById', 'uuid', { quest_stage = '3' })
+function StartInteractionById(projectId, customVars)
     if not projectId then return false end
 
     local project = nil
@@ -651,14 +788,14 @@ function StartInteractionById(projectId)
         return false
     end
 
-    StartInteraction(project)
+    StartInteraction(project, customVars)
     return true
 end
 
 exports('StartInteractionById', StartInteractionById)
 
-RegisterNetEvent('rc-interactions:client:startInteractionById', function(projectId)
-    StartInteractionById(projectId)
+RegisterNetEvent('rc-interactions:client:startInteractionById', function(projectId, customVars)
+    StartInteractionById(projectId, customVars)
 end)
 
 -- Test helpers: expose local state for the test harness.

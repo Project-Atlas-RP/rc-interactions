@@ -43,7 +43,11 @@ export function evaluateCondition(
   memory: GameMemory,
 ): boolean {
   const valA = memory[variableName || '']?.toString() || '';
-  const valB = targetValue || '';
+  // If targetValue starts with '$', resolve it as a variable reference from memory
+  const rawTarget = targetValue || '';
+  const valB = rawTarget.startsWith('$')
+    ? (memory[rawTarget.slice(1)]?.toString() || '')
+    : rawTarget;
   const op = operator || '==';
 
   const numA = parseFloat(valA);

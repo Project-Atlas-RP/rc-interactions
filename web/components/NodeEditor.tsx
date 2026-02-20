@@ -4,6 +4,7 @@ import { ProjectData, DialogueNode, Connection, NodeType, WorldCoords, RandomOut
 import { useLanguage } from '../contexts/LanguageContext';
 import { fetchNui } from '../utils/fetchNui';
 import { generateUUID } from '../utils/uuid';
+import { GAME_VARIABLES, VARIABLE_CATEGORIES, parseVariableName, type GameVariable, type VariableCategory } from '../utils/gameVariables';
 
 interface NodeEditorProps {
   project: ProjectData;
@@ -125,6 +126,7 @@ const NodeEditor: React.FC<NodeEditorProps> = ({ project, setProject }) => {
 
   // ── State ──
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
+  const [selectedNodeIds, setSelectedNodeIds] = useState<Set<string>>(new Set());
   const [dragNodeId, setDragNodeId] = useState<string | null>(null);
   const [transform, setTransform] = useState({ x: 0, y: 0, scale: 1 });
   const [isPanning, setIsPanning] = useState(false);
@@ -134,6 +136,9 @@ const NodeEditor: React.FC<NodeEditorProps> = ({ project, setProject }) => {
   const [showPalette, setShowPalette] = useState(false);
   const [paletteSearch, setPaletteSearch] = useState('');
 
+  // Marquee (box) selection
+  const [marquee, setMarquee] = useState<{ startX: number; startY: number; endX: number; endY: number } | null>(null);
+  const marqueeStartRef = useRef<{ clientX: number; clientY: number } | null>(null);
   // History
   const [history, setHistory] = useState<ProjectData[]>([]);
   const [future, setFuture] = useState<ProjectData[]>([]);
@@ -185,11 +190,17 @@ const NodeEditor: React.FC<NodeEditorProps> = ({ project, setProject }) => {
       // Ctrl+Y / Ctrl+Shift+Z
       if ((e.ctrlKey || e.metaKey) && (e.key === 'y' || (e.key === 'z' && e.shiftKey))) { e.preventDefault(); redo(); return; }
 
-      // Delete / Backspace selected node
-      if ((e.key === 'Delete' || e.key === 'Backspace') && !isInput && selectedNodeId) { e.preventDefault(); deleteNode(selectedNodeId); return; }
+      // Delete / Backspace selected node(s)
+      if ((e.key === 'Delete' || e.key === 'Backspace') && !isInput) {
+        if (selectedNodeIds.size > 0) { e.preventDefault(); deleteSelectedNodes(); return; }
+        if (selectedNodeId) { e.preventDefault(); deleteNode(selectedNodeId); return; }
+      }
 
       // Ctrl+D duplicate
-      if ((e.ctrlKey || e.metaKey) && e.key === 'd' && !isInput) { e.preventDefault(); duplicateNode(); return; }
+      if ((e.ctrlKey || e.metaKey) && e.key === 'd' && !isInput) { e.preventDefault(); duplicateSelected(); return; }
+
+      // Ctrl+L → auto-layout
+      if ((e.ctrlKey || e.metaKey) && e.key === 'l' && !isInput) { e.preventDefault(); autoLayout(); return; }
 
       // Tab or Ctrl+K → palette
       if (e.key === 'Tab' || ((e.ctrlKey || e.metaKey) && e.key === 'k')) {
@@ -203,6 +214,7 @@ const NodeEditor: React.FC<NodeEditorProps> = ({ project, setProject }) => {
       if (e.key === 'Escape') {
         if (showPalette) { setShowPalette(false); return; }
         if (contextMenu) { setContextMenu(null); return; }
+        if (selectedNodeIds.size > 0) { setSelectedNodeIds(new Set()); return; }
         if (selectedNodeId) { setSelectedNodeId(null); return; }
       }
     };
@@ -211,7 +223,7 @@ const NodeEditor: React.FC<NodeEditorProps> = ({ project, setProject }) => {
     window.addEventListener('keydown', onKeyDown);
     window.addEventListener('keyup', onKeyUp);
     return () => { window.removeEventListener('keydown', onKeyDown); window.removeEventListener('keyup', onKeyUp); };
-  }, [selectedNodeId, showPalette, contextMenu, undo, redo]);
+  }, [selectedNodeId, selectedNodeIds, showPalette, contextMenu, undo, redo]);
 
   // Auto-focus palette input
   useEffect(() => { if (showPalette && paletteInputRef.current) paletteInputRef.current.focus(); }, [showPalette]);
@@ -274,16 +286,36 @@ const NodeEditor: React.FC<NodeEditorProps> = ({ project, setProject }) => {
       e.preventDefault();
       return;
     }
-    // Left click on empty canvas → deselect
+    // Left click on empty canvas → start marquee selection
     if (e.button === 0) {
       if (selectedNodeId) setSelectedNodeId(null);
       if (contextMenu) setContextMenu(null);
+      // Begin marquee
+      marqueeStartRef.current = { clientX: e.clientX, clientY: e.clientY };
+      if (!e.shiftKey) setSelectedNodeIds(new Set());
     }
   };
 
   const handleNodeMouseDown = (id: string, e: React.MouseEvent) => {
     e.stopPropagation();
     if (e.button === 0) {
+      // Ctrl/Meta+click → toggle individual node in multi-select
+      if (e.ctrlKey || e.metaKey) {
+        setSelectedNodeIds(prev => {
+          const next = new Set(prev);
+          if (next.has(id)) next.delete(id); else next.add(id);
+          return next;
+        });
+        return;
+      }
+      // If clicking on a node already in multi-selection → drag the group
+      if (selectedNodeIds.has(id)) {
+        setDragNodeId(id);
+        dragStartProjectState.current = project;
+        return;
+      }
+      // Normal click → single-select, clear multi-select
+      setSelectedNodeIds(new Set());
       setSelectedNodeId(id);
       setDragNodeId(id);
       dragStartProjectState.current = project;
@@ -327,7 +359,18 @@ const NodeEditor: React.FC<NodeEditorProps> = ({ project, setProject }) => {
   };
 
   const handleMouseUp = () => {
-    if (dragNodeId && dragStartProjectState.current) {
+    // Finalize multi-node drag history
+    if (dragNodeId && selectedNodeIds.has(dragNodeId) && dragStartProjectState.current) {
+      const startNodes = dragStartProjectState.current.nodes;
+      const changed = selectedNodeIds.size > 0 && [...selectedNodeIds].some(nid => {
+        const sn = startNodes.find(n => n.id === nid);
+        const cn = project.nodes.find(n => n.id === nid);
+        return sn && cn && (sn.position.x !== cn.position.x || sn.position.y !== cn.position.y);
+      });
+      if (changed) { setHistory(prev => [...prev, dragStartProjectState.current!]); setFuture([]); }
+    }
+    // Finalize single-node drag history
+    else if (dragNodeId && dragStartProjectState.current) {
       const startN = dragStartProjectState.current.nodes.find(n => n.id === dragNodeId);
       const curN = project.nodes.find(n => n.id === dragNodeId);
       if (startN && curN && (startN.position.x !== curN.position.x || startN.position.y !== curN.position.y)) {
@@ -335,6 +378,10 @@ const NodeEditor: React.FC<NodeEditorProps> = ({ project, setProject }) => {
         setFuture([]);
       }
     }
+    // End marquee selection
+    if (marquee) setMarquee(null);
+    marqueeStartRef.current = null;
+
     setIsPanning(false);
     setDragNodeId(null);
     setActiveConn(null);
@@ -346,23 +393,68 @@ const NodeEditor: React.FC<NodeEditorProps> = ({ project, setProject }) => {
       setTransform(prev => ({ ...prev, x: prev.x + e.movementX, y: prev.y + e.movementY }));
       return;
     }
+    // Multi-node or single-node drag
     if (dragNodeId) {
       const dx = e.movementX / transform.scale;
       const dy = e.movementY / transform.scale;
-      setProject(prev => ({
-        ...prev,
-        nodes: prev.nodes.map(node =>
-          node.id === dragNodeId
-            ? { ...node, position: { x: node.position.x + dx, y: node.position.y + dy } }
-            : node
-        ),
-      }));
+      // If dragging a node that's part of multi-select → move all selected
+      if (selectedNodeIds.has(dragNodeId)) {
+        setProject(prev => ({
+          ...prev,
+          nodes: prev.nodes.map(node =>
+            selectedNodeIds.has(node.id)
+              ? { ...node, position: { x: node.position.x + dx, y: node.position.y + dy } }
+              : node
+          ),
+        }));
+      } else {
+        setProject(prev => ({
+          ...prev,
+          nodes: prev.nodes.map(node =>
+            node.id === dragNodeId
+              ? { ...node, position: { x: node.position.x + dx, y: node.position.y + dy } }
+              : node
+          ),
+        }));
+      }
+      return;
+    }
+    // Marquee box selection
+    if (marqueeStartRef.current && !activeConn) {
+      const rect = containerRef.current?.getBoundingClientRect();
+      if (!rect) return;
+      const startCanvas = {
+        x: (marqueeStartRef.current.clientX - rect.left - transform.x) / transform.scale,
+        y: (marqueeStartRef.current.clientY - rect.top - transform.y) / transform.scale,
+      };
+      const endCanvas = {
+        x: (e.clientX - rect.left - transform.x) / transform.scale,
+        y: (e.clientY - rect.top - transform.y) / transform.scale,
+      };
+      setMarquee({ startX: startCanvas.x, startY: startCanvas.y, endX: endCanvas.x, endY: endCanvas.y });
+      // Determine which nodes overlap the marquee
+      const minX = Math.min(startCanvas.x, endCanvas.x);
+      const minY = Math.min(startCanvas.y, endCanvas.y);
+      const maxX = Math.max(startCanvas.x, endCanvas.x);
+      const maxY = Math.max(startCanvas.y, endCanvas.y);
+      const NODE_WIDTH = 280;
+      const NODE_HEIGHT = 60; // approximate header height
+      const hit = new Set<string>();
+      for (const node of project.nodes) {
+        const nx = node.position.x, ny = node.position.y;
+        // Node overlaps if their rectangles intersect
+        if (nx + NODE_WIDTH > minX && nx < maxX && ny + NODE_HEIGHT > minY && ny < maxY) {
+          hit.add(node.id);
+        }
+      }
+      setSelectedNodeIds(hit);
+      return;
     }
     if (activeConn) {
       const pos = toCanvasCoords(e.clientX, e.clientY);
       setActiveConn(prev => prev ? { ...prev, mouseX: pos.x, mouseY: pos.y } : null);
     }
-  }, [dragNodeId, isPanning, activeConn, transform.scale, toCanvasCoords, setProject]);
+  }, [dragNodeId, isPanning, activeConn, transform, toCanvasCoords, setProject, selectedNodeIds, project.nodes]);
 
   // ── Zoom centered on cursor ──
   const handleWheel = useCallback((e: React.WheelEvent) => {
@@ -438,8 +530,8 @@ const NodeEditor: React.FC<NodeEditorProps> = ({ project, setProject }) => {
 
   const resetView = () => setTransform({ x: 0, y: 0, scale: 1 });
 
-  const fitToView = () => {
-    if (project.nodes.length === 0) { resetView(); return; }
+  const fitToView = useCallback(() => {
+    if (project.nodes.length === 0) { setTransform({ x: 0, y: 0, scale: 1 }); return; }
     if (!containerRef.current) return;
     const rect = containerRef.current.getBoundingClientRect();
     const pad = 120;
@@ -458,7 +550,7 @@ const NodeEditor: React.FC<NodeEditorProps> = ({ project, setProject }) => {
       y: rect.height / 2 - ((minY + maxY) / 2) * scale,
       scale: Math.max(0.2, Math.min(scale, 1.5)),
     });
-  };
+  }, [project.nodes]);
 
   const deleteNode = useCallback((id: string) => {
     saveToHistory();
@@ -487,6 +579,186 @@ const NodeEditor: React.FC<NodeEditorProps> = ({ project, setProject }) => {
     setProject(prev => ({ ...prev, nodes: [...prev.nodes, newNode] }));
     setSelectedNodeId(newNode.id);
   }, [selectedNodeId, project, saveToHistory, setProject]);
+
+  const deleteSelectedNodes = useCallback(() => {
+    if (selectedNodeIds.size === 0) return;
+    saveToHistory();
+    setProject(prev => ({
+      nodes: prev.nodes.filter(n => !selectedNodeIds.has(n.id)),
+      connections: prev.connections.filter(c => !selectedNodeIds.has(c.fromNodeId) && !selectedNodeIds.has(c.toNodeId)),
+    }));
+    setSelectedNodeIds(new Set());
+    setSelectedNodeId(null);
+  }, [selectedNodeIds, saveToHistory, setProject]);
+
+  const duplicateSelected = useCallback(() => {
+    // Multi-duplicate
+    if (selectedNodeIds.size > 0) {
+      const nodesToDup = project.nodes.filter(n => selectedNodeIds.has(n.id));
+      if (nodesToDup.length === 0) return;
+      saveToHistory();
+      const newIds = new Set<string>();
+      const newNodes = nodesToDup.map(node => {
+        const newId = `${node.type.toLowerCase()}-${generateUUID()}`;
+        newIds.add(newId);
+        return {
+          ...node,
+          id: newId,
+          position: { x: node.position.x + 40, y: node.position.y + 40 },
+          data: {
+            ...node.data,
+            choices: node.data.choices?.map(c => ({ ...c, id: `c-${generateUUID()}`, nextNodeId: null })),
+            randomOutputs: node.data.randomOutputs?.map(o => ({ ...o, id: `ro-${generateUUID()}` })),
+          },
+        } as DialogueNode;
+      });
+      setProject(prev => ({ ...prev, nodes: [...prev.nodes, ...newNodes] }));
+      setSelectedNodeIds(newIds);
+      return;
+    }
+    // Single duplicate fallback
+    duplicateNode();
+  }, [selectedNodeIds, project, saveToHistory, setProject, duplicateNode]);
+
+  // Ref
+  const fitToViewRef = useRef(fitToView);
+  fitToViewRef.current = fitToView;
+  const [pendingFitToView, setPendingFitToView] = useState(false);
+  useEffect(() => { if (pendingFitToView) { fitToViewRef.current(); setPendingFitToView(false); } }, [pendingFitToView, project.nodes]);
+
+  // ── Auto-layout (hierarchical / Sugiyama-lite) ──
+  const autoLayout = useCallback(() => {
+    if (project.nodes.length === 0) return;
+    saveToHistory();
+
+    const NODE_W = 280;
+    const NODE_H_BASE = 100;
+    const GAP_X = 120;
+    const GAP_Y = 50;
+
+    // Estimate node height based on type & data
+    const estimateHeight = (node: DialogueNode): number => {
+      if (node.type === NodeType.DIALOGUE) return 136 + (node.data.choices?.length || 0) * 44;
+      if (node.type === NodeType.CONDITION) return 180;
+      if (node.type === NodeType.RANDOM) return 80 + (node.data.randomOutputs?.length || 0) * 44;
+      return NODE_H_BASE;
+    };
+
+    // Build adjacency: nodeId → [childNodeIds]
+    const children = new Map<string, string[]>();
+    const parentCount = new Map<string, number>();
+    for (const n of project.nodes) { children.set(n.id, []); parentCount.set(n.id, 0); }
+    for (const c of project.connections) {
+      children.get(c.fromNodeId)?.push(c.toNodeId);
+      parentCount.set(c.toNodeId, (parentCount.get(c.toNodeId) || 0) + 1);
+    }
+
+    // BFS to assign layers (longest path from roots)
+    const layer = new Map<string, number>();
+    const startNodes = project.nodes.filter(n => n.type === NodeType.START);
+    const roots = startNodes.length > 0
+      ? startNodes
+      : project.nodes.filter(n => (parentCount.get(n.id) || 0) === 0);
+
+    // Longest-path layering via BFS (with cycle protection)
+    const queue: string[] = [];
+    const visitCount = new Map<string, number>();
+    const MAX_VISITS = project.nodes.length * 2; // safety limit
+    for (const r of roots) { layer.set(r.id, 0); queue.push(r.id); }
+    // If no roots found, seed the first node
+    if (queue.length === 0 && project.nodes.length > 0) {
+      layer.set(project.nodes[0].id, 0);
+      queue.push(project.nodes[0].id);
+    }
+    let head = 0;
+    while (head < queue.length) {
+      const nid = queue[head++];
+      const curLayer = layer.get(nid) || 0;
+      for (const childId of (children.get(nid) || [])) {
+        const prev = layer.get(childId);
+        const vc = (visitCount.get(childId) || 0) + 1;
+        visitCount.set(childId, vc);
+        if (vc > MAX_VISITS) continue; // cycle detected, skip
+        if (prev === undefined || curLayer + 1 > prev) {
+          layer.set(childId, curLayer + 1);
+          queue.push(childId);
+        }
+      }
+    }
+
+    // Assign orphans (disconnected nodes) to a final layer
+    let maxLayer = 0;
+    for (const v of layer.values()) if (v > maxLayer) maxLayer = v;
+    for (const n of project.nodes) {
+      if (!layer.has(n.id)) {
+        layer.set(n.id, maxLayer + 1);
+      }
+    }
+    // Recalc max
+    maxLayer = 0;
+    for (const v of layer.values()) if (v > maxLayer) maxLayer = v;
+
+    // Group nodes by layer
+    const layers: string[][] = [];
+    for (let i = 0; i <= maxLayer; i++) layers.push([]);
+    for (const n of project.nodes) layers[layer.get(n.id) || 0].push(n.id);
+
+    // Sort nodes within each layer to minimize edge crossings (simple median heuristic)
+    for (let li = 1; li < layers.length; li++) {
+      const medianPos = new Map<string, number>();
+      for (const nid of layers[li]) {
+        // Find parents in previous layer
+        const parentPositions: number[] = [];
+        for (const c of project.connections) {
+          if (c.toNodeId === nid && layers[li - 1].includes(c.fromNodeId)) {
+            parentPositions.push(layers[li - 1].indexOf(c.fromNodeId));
+          }
+        }
+        if (parentPositions.length > 0) {
+          parentPositions.sort((a, b) => a - b);
+          medianPos.set(nid, parentPositions[Math.floor(parentPositions.length / 2)]);
+        } else {
+          medianPos.set(nid, Infinity);
+        }
+      }
+      layers[li].sort((a, b) => (medianPos.get(a) || 0) - (medianPos.get(b) || 0));
+    }
+
+    // Compute positions
+    const nodeMap = new Map(project.nodes.map(n => [n.id, n]));
+    const newPositions = new Map<string, { x: number; y: number }>();
+    let xOffset = 0;
+
+    for (let li = 0; li < layers.length; li++) {
+      // Calculate max column width (for centering)
+      let totalHeight = 0;
+      const heights: number[] = [];
+      for (const nid of layers[li]) {
+        const h = estimateHeight(nodeMap.get(nid)!);
+        heights.push(h);
+        totalHeight += h;
+      }
+      totalHeight += (layers[li].length - 1) * GAP_Y;
+
+      let yOffset = -totalHeight / 2;
+      for (let ni = 0; ni < layers[li].length; ni++) {
+        newPositions.set(layers[li][ni], { x: xOffset, y: yOffset });
+        yOffset += heights[ni] + GAP_Y;
+      }
+      xOffset += NODE_W + GAP_X;
+    }
+
+    setProject(prev => ({
+      ...prev,
+      nodes: prev.nodes.map(n => ({
+        ...n,
+        position: newPositions.get(n.id) || n.position,
+      })),
+    }));
+
+    // Fit to view after layout
+    setPendingFitToView(true);
+  }, [project, saveToHistory, setProject]);
 
   const deleteConnection = (connId: string) => {
     const conn = project.connections.find(c => c.id === connId);
@@ -607,13 +879,18 @@ const NodeEditor: React.FC<NodeEditorProps> = ({ project, setProject }) => {
         </svg>
 
         {/* ── Nodes ── */}
-        {project.nodes.map(node => (
+        {project.nodes.map(node => {
+          const isMultiSelected = selectedNodeIds.has(node.id);
+          const isSingleSelected = selectedNodeId === node.id;
+          return (
           <div
             key={node.id}
             onMouseDown={e => handleNodeMouseDown(node.id, e)}
             className={`
               absolute w-[280px] rounded-md pointer-events-auto flex flex-col transition-shadow border
-              ${selectedNodeId === node.id ? 'ring-1 ring-zinc-100/80 shadow-2xl shadow-white/5 z-20 border-zinc-600' : 'shadow-xl z-10 border-zinc-800/80 hover:border-zinc-700'}
+              ${isSingleSelected ? 'ring-1 ring-zinc-100/80 shadow-2xl shadow-white/5 z-20 border-zinc-600'
+                : isMultiSelected ? 'ring-1 ring-sky-400/60 shadow-2xl shadow-sky-500/10 z-20 border-sky-500/50'
+                : 'shadow-xl z-10 border-zinc-800/80 hover:border-zinc-700'}
             `}
             style={{ left: node.position.x, top: node.position.y, backgroundColor: '#0a0a0b' }}
           >
@@ -789,7 +1066,21 @@ const NodeEditor: React.FC<NodeEditorProps> = ({ project, setProject }) => {
               )}
             </div>
           </div>
-        ))}
+          );
+        })}
+
+        {/* ── Marquee selection rectangle ── */}
+        {marquee && (
+          <div
+            className="absolute border border-sky-400/60 bg-sky-400/10 pointer-events-none z-50"
+            style={{
+              left: Math.min(marquee.startX, marquee.endX),
+              top: Math.min(marquee.startY, marquee.endY),
+              width: Math.abs(marquee.endX - marquee.startX),
+              height: Math.abs(marquee.endY - marquee.startY),
+            }}
+          />
+        )}
       </div>
 
       {/* ═══════════ BOTTOM TOOLBAR ═══════════ */}
@@ -859,6 +1150,16 @@ const NodeEditor: React.FC<NodeEditorProps> = ({ project, setProject }) => {
           </div>
         </div>
 
+        {/* Auto Layout */}
+        <div className="relative group">
+          <button onClick={autoLayout} className="w-8 h-8 flex items-center justify-center rounded-xl text-zinc-500 hover:bg-zinc-800 hover:text-zinc-100 transition-all">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><path d="M10 7h4"/><path d="M10 17h4"/><path d="M7 10v4"/><path d="M17 10v4"/></svg>
+          </button>
+          <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 px-2.5 py-1 bg-zinc-950 border border-zinc-800 rounded-md text-[9px] font-bold text-zinc-400 opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none whitespace-nowrap z-[60]">
+            {t('editor.auto_layout')} <kbd className="ml-1 px-1 py-0.5 bg-zinc-800 rounded text-[8px] text-zinc-500">Ctrl+L</kbd>
+          </div>
+        </div>
+
         {/* Reset View */}
         <div className="relative group">
           <button onClick={resetView} className="w-8 h-8 flex items-center justify-center rounded-xl text-zinc-500 hover:bg-zinc-800 hover:text-zinc-100 transition-all">
@@ -894,6 +1195,10 @@ const NodeEditor: React.FC<NodeEditorProps> = ({ project, setProject }) => {
         <div className="flex items-center gap-2 text-[9px] text-zinc-500">
           <kbd className="px-1.5 py-0.5 bg-zinc-900 border border-zinc-800 rounded text-zinc-500 font-mono">Ctrl+D</kbd>
           <span>{t('editor.hint_duplicate')}</span>
+        </div>
+        <div className="flex items-center gap-2 text-[9px] text-zinc-500">
+          <kbd className="px-1.5 py-0.5 bg-zinc-900 border border-zinc-800 rounded text-zinc-500 font-mono">Ctrl+L</kbd>
+          <span>{t('editor.hint_auto_layout')}</span>
         </div>
       </div>
 
@@ -1042,12 +1347,59 @@ const NodeEditor: React.FC<NodeEditorProps> = ({ project, setProject }) => {
                 </>
               );
 
-              if (node.type === NodeType.CONDITION || node.type === NodeType.SET_VARIABLE) return (
+              if (node.type === NodeType.CONDITION || node.type === NodeType.SET_VARIABLE) {
+                const parsed = parseVariableName(node.data.variableName || '');
+                const isValueRef = node.type === NodeType.CONDITION && (node.data.variableValue || '').startsWith('$');
+                const valueRefRaw = isValueRef ? (node.data.variableValue || '').slice(1) : '';
+                const valueRefParsed = isValueRef ? parseVariableName(valueRefRaw) : null;
+
+                // Helper: build the grouped <select> for picking a game variable
+                const VariableSelect = ({ currentParsed, onChangeVar }: { currentParsed: ReturnType<typeof parseVariableName>; onChangeVar: (fullKey: string) => void }) => (
+                  <>
+                    <select
+                      value={currentParsed.variable?.value ?? ''}
+                      onChange={e => {
+                        const sel = GAME_VARIABLES.find(v => v.value === e.target.value);
+                        if (sel) onChangeVar(sel.requiresSuffix ? sel.value + (currentParsed.suffix || '') : sel.value);
+                      }}
+                      className="w-full bg-zinc-900 border border-zinc-800 rounded-md px-3 py-2 text-[11px] font-mono text-zinc-300 focus:outline-none focus:border-zinc-600 transition-colors"
+                    >
+                      {VARIABLE_CATEGORIES.map(cat => (
+                        <optgroup key={cat} label={t('editor.var.cat_' + cat)}>
+                          {GAME_VARIABLES.filter(v => v.category === cat).map(v => (
+                            <option key={v.value + v.labelKey} value={v.value}>{t(v.labelKey)}</option>
+                          ))}
+                        </optgroup>
+                      ))}
+                    </select>
+                    {currentParsed.variable?.requiresSuffix && (
+                      <input
+                        type="text"
+                        value={currentParsed.suffix}
+                        onChange={e => onChangeVar((currentParsed.variable?.value || '') + e.target.value)}
+                        placeholder={currentParsed.variable.suffixPlaceholder}
+                        className="w-full bg-zinc-900 border border-zinc-800 rounded-md px-3 py-2 text-[11px] font-mono text-zinc-300 focus:outline-none focus:border-zinc-600 transition-colors"
+                      />
+                    )}
+                    {currentParsed.variable?.hintKey && (
+                      <p className="text-[9px] text-zinc-600 leading-relaxed">{t(currentParsed.variable.hintKey)}</p>
+                    )}
+                  </>
+                );
+
+                return (
                 <>
+                  {/* ── Variable Key ── */}
                   <div className="space-y-2">
                     <label className="text-[9px] font-black text-zinc-600 uppercase tracking-widest">{t('editor.variable_key')}</label>
-                    <input type="text" value={node.data.variableName || ''} onChange={e => updateData('variableName', e.target.value)} className="w-full bg-zinc-900 border border-zinc-800 rounded-md px-3 py-2 text-[11px] font-mono text-zinc-300 focus:outline-none focus:border-zinc-600 transition-colors" />
+                    {node.type === NodeType.CONDITION ? (
+                      <VariableSelect currentParsed={parsed} onChangeVar={v => updateData('variableName', v)} />
+                    ) : (
+                      <input type="text" value={node.data.variableName || ''} onChange={e => updateData('variableName', e.target.value)} className="w-full bg-zinc-900 border border-zinc-800 rounded-md px-3 py-2 text-[11px] font-mono text-zinc-300 focus:outline-none focus:border-zinc-600 transition-colors" />
+                    )}
                   </div>
+
+                  {/* ── Operator (CONDITION only) ── */}
                   {node.type === NodeType.CONDITION && (
                     <div className="space-y-2">
                       <label className="text-[9px] font-black text-zinc-600 uppercase tracking-widest">{t('editor.operator')}</label>
@@ -1061,12 +1413,35 @@ const NodeEditor: React.FC<NodeEditorProps> = ({ project, setProject }) => {
                       </select>
                     </div>
                   )}
+
+                  {/* ── Value ── */}
                   <div className="space-y-2">
-                    <label className="text-[9px] font-black text-zinc-600 uppercase tracking-widest">{node.type === NodeType.SET_VARIABLE ? t('editor.value_set') : t('editor.value_check')}</label>
-                    <input type="text" value={node.data.variableValue || ''} onChange={e => updateData('variableValue', e.target.value)} className="w-full bg-zinc-900 border border-zinc-800 rounded-md px-3 py-2 text-[11px] font-mono text-zinc-300 focus:outline-none focus:border-zinc-600 transition-colors" />
+                    <div className="flex items-center justify-between">
+                      <label className="text-[9px] font-black text-zinc-600 uppercase tracking-widest">{node.type === NodeType.SET_VARIABLE ? t('editor.value_set') : t('editor.value_check')}</label>
+                      {node.type === NodeType.CONDITION && (
+                        <div className="flex bg-zinc-900 rounded-md overflow-hidden border border-zinc-800">
+                          <button
+                            onClick={() => { if (isValueRef) updateData('variableValue', ''); }}
+                            className={`px-2 py-0.5 text-[8px] font-black uppercase tracking-wider transition-colors ${!isValueRef ? 'bg-zinc-700 text-zinc-200' : 'text-zinc-600 hover:text-zinc-400'}`}
+                            title={t('editor.value_mode_fixed')}
+                          >Aa</button>
+                          <button
+                            onClick={() => { if (!isValueRef) updateData('variableValue', '$'); }}
+                            className={`px-2 py-0.5 text-[8px] font-black uppercase tracking-wider transition-colors ${isValueRef ? 'bg-zinc-700 text-zinc-200' : 'text-zinc-600 hover:text-zinc-400'}`}
+                            title={t('editor.value_mode_var')}
+                          >$</button>
+                        </div>
+                      )}
+                    </div>
+                    {isValueRef ? (
+                      <VariableSelect currentParsed={valueRefParsed!} onChangeVar={v => updateData('variableValue', '$' + v)} />
+                    ) : (
+                      <input type="text" value={node.data.variableValue || ''} onChange={e => updateData('variableValue', e.target.value)} className="w-full bg-zinc-900 border border-zinc-800 rounded-md px-3 py-2 text-[11px] font-mono text-zinc-300 focus:outline-none focus:border-zinc-600 transition-colors" />
+                    )}
                   </div>
                 </>
               );
+              }
 
               if (node.type === NodeType.EVENT) return (
                 <div className="space-y-2">
