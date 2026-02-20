@@ -18,7 +18,33 @@ const GameSimulator: React.FC<GameSimulatorProps> = ({ project }) => {
   const [isInteractionActive, setIsInteractionActive] = useState(false);
   
   const [hasStarted, setHasStarted] = useState(false);
-  const memoryRef = useRef<GameMemory>({ honor_level: 55 });
+  const memoryRef = useRef<GameMemory>({
+    honor_level: 55,
+    // Mock game variables for simulator
+    'player:health': 180,
+    'player:armor': 50,
+    'player:x': 200, 'player:y': 300, 'player:z': 30,
+    'player:heading': 90,
+    'player:speed': 0,
+    'player:ped_id': 12345,
+    'player:server_id': 1,
+    'player:name': 'TestPlayer',
+    'player:is_dead': 0, 'player:is_in_vehicle': 0,
+    'player:vehicle_model': '', 'player:vehicle_seat': -1,
+    'player:weapon': 'WEAPON_UNARMED', 'player:ammo': 0,
+    'player:wanted_level': 0, 'player:is_swimming': 0, 'player:is_falling': 0,
+    'money:cash': 2500,
+    'money:bank': 15000,
+    'money:crypto': 0,
+    'item:bread': 0,
+    'item:water': 2,
+    'item:phone': 1,
+    'item:lockpick': 0,
+    'item:armor': 0,
+    'job:police': 0,
+    'job:ambulance': 0,
+    'job:mechanic': 0,
+  });
 
   const currentNode = project.nodes.find(n => n.id === currentNodeId);
 
@@ -49,8 +75,13 @@ const GameSimulator: React.FC<GameSimulatorProps> = ({ project }) => {
         }
 
         if (node.type === NodeType.CONDITION) {
-            const valA = memoryRef.current[node.data.variableName || ""]?.toString() || "";
-            const valB = node.data.variableValue || "";
+            const varName = node.data.variableName || '';
+            const valA = memoryRef.current[varName]?.toString() || '';
+            // Handle $ prefix — resolve variable reference
+            const rawTarget = node.data.variableValue || '';
+            const valB = rawTarget.startsWith('$')
+              ? (memoryRef.current[rawTarget.slice(1)]?.toString() || '')
+              : rawTarget;
             let result = false;
 
             const numA = parseFloat(valA);
@@ -201,10 +232,15 @@ const GameSimulator: React.FC<GameSimulatorProps> = ({ project }) => {
       if (nextId) setCurrentNodeId(nextId);
   };
 
-  const handleChoice = useCallback((nextNodeId: string | null) => {
-    if (isTyping || !nextNodeId) return;
+  const handleChoice = useCallback((choiceId: string, fromNodeId: string) => {
+    if (isTyping) return;
     
-    const actualNextId = traverseLogic(nextNodeId);
+    // Look up the target node from connections using the choice id as port
+    const conn = project.connections.find(c => c.fromNodeId === fromNodeId && c.fromPort === choiceId);
+    const targetNodeId = conn?.toNodeId || null;
+    if (!targetNodeId) return;
+    
+    const actualNextId = traverseLogic(targetNodeId);
     
     if (actualNextId) {
         const nextNode = project.nodes.find(n => n.id === actualNextId);
@@ -219,7 +255,7 @@ const GameSimulator: React.FC<GameSimulatorProps> = ({ project }) => {
         setIsInteractionActive(false);
         setHasStarted(false);
     }
-  }, [isTyping, traverseLogic, project.nodes]);
+  }, [isTyping, traverseLogic, project.nodes, project.connections]);
 
   useEffect(() => {
     if (currentNode?.type === NodeType.DIALOGUE && currentNode?.data.text && isInteractionActive) {
@@ -256,12 +292,12 @@ const GameSimulator: React.FC<GameSimulatorProps> = ({ project }) => {
         setSelectedIndex(prev => (prev - 1 + choicesCount) % choicesCount);
       } else if (e.key === 'Enter') {
         const selectedChoice = currentNode?.data.choices?.[selectedIndex];
-        if (selectedChoice) handleChoice(selectedChoice.nextNodeId);
-      } else if (['1', '2', '3', '4'].includes(e.key)) {
+        if (selectedChoice && currentNodeId) handleChoice(selectedChoice.id, currentNodeId);
+      } else if (['1', '2', '3', '4', '5'].includes(e.key)) {
         const idx = parseInt(e.key) - 1;
         if (idx < choicesCount) {
           const choice = currentNode?.data.choices?.[idx];
-          if (choice) handleChoice(choice.nextNodeId);
+          if (choice && currentNodeId) handleChoice(choice.id, currentNodeId);
         }
       } else if (e.key === 'Escape') {
         setIsInteractionActive(false);
@@ -334,7 +370,7 @@ const GameSimulator: React.FC<GameSimulatorProps> = ({ project }) => {
                {currentNode?.data.choices?.map((choice, idx) => (
                  <button
                    key={choice.id}
-                   onClick={() => handleChoice(choice.nextNodeId)}
+                   onClick={() => currentNodeId && handleChoice(choice.id, currentNodeId)}
                    onMouseEnter={() => setSelectedIndex(idx)}
                    className={`
                      group w-full relative flex items-center justify-between px-8 py-5 transition-all duration-300

@@ -182,14 +182,16 @@ end)
 
 -- Active interaction sessions per player
 local ActiveSessions = {} -- [serverId] = { projectId = string, startedAt = number }
--- Per-player processed-node set – prevents replaying the same node
-local ProcessedNodes = {} -- [serverId] = { ["projectId:nodeId"] = true }
+-- Per-player per-node cooldown – prevents rapid replay of the same economy node
+-- while still allowing legitimate flow loops (e.g. returning to a shop menu)
+local NodeCooldowns = {}   -- [serverId] = { ["projectId:nodeId"] = os.time() }
 -- Economy cooldown per player
 local Cooldowns = {}       -- [serverId] = os.time()
 
-local ECONOMY_COOLDOWN = 1   -- min seconds between economy actions per player
-local MAX_ITEM_COUNT   = 100 -- hard cap per single node
-local MAX_MONEY_AMOUNT = 1000000
+local ECONOMY_COOLDOWN  = 1   -- min seconds between economy actions per player
+local NODE_COOLDOWN     = 3   -- min seconds before the SAME economy node can be re-processed
+local MAX_ITEM_COUNT    = 100 -- hard cap per single node
+local MAX_MONEY_AMOUNT  = 1000000
 local VALID_MONEY_TYPES = { cash = true, bank = true }
 
 -- Server-side interactions cache (kept in sync with DB)
@@ -270,16 +272,17 @@ local function CheckCooldown(src)
     return true
 end
 
-local function IsNodeAlreadyProcessed(src, projectId, nodeId)
+local function IsNodeOnCooldown(src, projectId, nodeId)
     local key = projectId .. ':' .. nodeId
-    if ProcessedNodes[src] and ProcessedNodes[src][key] then
+    if not NodeCooldowns[src] then NodeCooldowns[src] = {} end
+    local last = NodeCooldowns[src][key]
+    if last and (os.time() - last) < NODE_COOLDOWN then
         if Config.Debug then
-            print('^1[RC-Interactions] SECURITY: player ' .. src .. ' replayed node ' .. key .. '^7')
+            print('^1[RC-Interactions] SECURITY: player ' .. src .. ' node cooldown ' .. key .. '^7')
         end
         return true
     end
-    if not ProcessedNodes[src] then ProcessedNodes[src] = {} end
-    ProcessedNodes[src][key] = true
+    NodeCooldowns[src][key] = os.time()
     return false
 end
 
@@ -289,7 +292,7 @@ RegisterNetEvent('rc-interactions:server:startSession', function(projectId)
     local src = source
     if type(projectId) ~= 'string' or #projectId > 100 then return end
     ActiveSessions[src] = { projectId = projectId, startedAt = os.time() }
-    ProcessedNodes[src] = {} -- reset processed set for new session
+    NodeCooldowns[src] = {} -- reset node cooldowns for new session
     if Config.Debug then
         print('[RC-Interactions] Session started: player=' .. src .. ' project=' .. projectId)
     end
@@ -298,7 +301,7 @@ end)
 RegisterNetEvent('rc-interactions:server:endSession', function()
     local src = source
     ActiveSessions[src] = nil
-    ProcessedNodes[src] = nil
+    NodeCooldowns[src] = nil
     if Config.Debug then
         print('[RC-Interactions] Session ended: player=' .. src)
     end
@@ -307,7 +310,7 @@ end)
 AddEventHandler('playerDropped', function()
     local src = source
     ActiveSessions[src]  = nil
-    ProcessedNodes[src]  = nil
+    NodeCooldowns[src]   = nil
     Cooldowns[src]       = nil
 end)
 
@@ -323,8 +326,8 @@ RegisterNetEvent('rc-interactions:server:processNode', function(projectId, nodeI
     -- 2. Session validation
     if not ValidateSession(src, projectId) then return end
 
-    -- 3. Replay protection – same node in same session = reject
-    if IsNodeAlreadyProcessed(src, projectId, nodeId) then return end
+    -- 3. Per-node cooldown – prevents rapid-fire replay of economy nodes
+    if IsNodeOnCooldown(src, projectId, nodeId) then return end
 
     -- 4. Cooldown
     if not CheckCooldown(src) then return end

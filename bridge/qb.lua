@@ -68,16 +68,56 @@ end
 
 function Bridge.QBCore.AddItem(source, item, count)
     if not IsDuplicityVersion() then return false end
+    count = count or 1
+
+    -- Try ox_inventory first (most common modern setup)
+    if GetResourceState('ox_inventory') == 'started' then
+        local ok, result = pcall(exports['ox_inventory'].AddItem, exports['ox_inventory'], source, item, count)
+        if ok then return result end
+    end
+
+    -- Try qb-inventory export
+    if GetResourceState('qb-inventory') == 'started' then
+        local ok, result = pcall(exports['qb-inventory'].AddItem, exports['qb-inventory'], source, item, count)
+        if ok then return result end
+    end
+
+    -- Fallback to Player.Functions.AddItem (old qb-core)
     local Player = QBCore.Functions.GetPlayer(source)
     if not Player then return false end
-    return Player.Functions.AddItem(item, count or 1)
+    if Player.Functions and Player.Functions.AddItem then
+        return Player.Functions.AddItem(item, count)
+    end
+
+    print('^1[RC-Interactions]^7 No compatible inventory found for AddItem')
+    return false
 end
 
 function Bridge.QBCore.RemoveItem(source, item, count)
     if not IsDuplicityVersion() then return false end
+    count = count or 1
+
+    -- Try ox_inventory first
+    if GetResourceState('ox_inventory') == 'started' then
+        local ok, result = pcall(exports['ox_inventory'].RemoveItem, exports['ox_inventory'], source, item, count)
+        if ok then return result end
+    end
+
+    -- Try qb-inventory export
+    if GetResourceState('qb-inventory') == 'started' then
+        local ok, result = pcall(exports['qb-inventory'].RemoveItem, exports['qb-inventory'], source, item, count)
+        if ok then return result end
+    end
+
+    -- Fallback to Player.Functions.RemoveItem (old qb-core)
     local Player = QBCore.Functions.GetPlayer(source)
     if not Player then return false end
-    return Player.Functions.RemoveItem(item, count or 1)
+    if Player.Functions and Player.Functions.RemoveItem then
+        return Player.Functions.RemoveItem(item, count)
+    end
+
+    print('^1[RC-Interactions]^7 No compatible inventory found for RemoveItem')
+    return false
 end
 
 function Bridge.QBCore.GetMoney(source, moneyType)
