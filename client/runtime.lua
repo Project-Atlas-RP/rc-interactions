@@ -245,7 +245,6 @@ function ProcessNode(project, node)
             else
                 PlayTalkAnim(ped)
             end
-            EnsureNpcTalkLoop(project.id, ped)
             if not playedGreeting[project.id] then
                 local greetLine = GREETING_SPEECH_LINES[math.random(1, #GREETING_SPEECH_LINES)]
                 PlayAmbientSpeech1(ped, greetLine, SPEECH_PARAMS)
