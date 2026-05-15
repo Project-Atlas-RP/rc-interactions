@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 
 type RuntimeChoice = {
   id: string;
@@ -19,17 +19,30 @@ type Props = {
   onCancel: () => void;
 };
 
+const ACCENT_COLOR = '#7048e8';
+
 const RuntimeDialogue: React.FC<Props> = ({ data, onSelectChoice, onCancel }) => {
   const choices = data.choices ?? [];
   const [displayText, setDisplayText] = useState('');
-  const [isTyping, setIsTyping] = useState(false);
-  const [selectedIndex, setSelectedIndex] = useState(0);
+  const [isTyping, setIsTyping] = useState(true);
+  const [hoveredIndex, setHoveredIndex] = useState<number | null>(null);
+  const prevNodeIdRef = useRef(data.nodeId);
+
+  // Reset typing state synchronously when node changes to prevent flash
+  if (data.nodeId !== prevNodeIdRef.current) {
+    prevNodeIdRef.current = data.nodeId;
+    if (!isTyping) setIsTyping(true);
+  }
+
+  const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const fullTextRef = useRef('');
 
   // Typing effect
   useEffect(() => {
     if (data.text) {
       setIsTyping(true);
       setDisplayText('');
+      fullTextRef.current = data.text;
       let i = 0;
       const fullText = data.text;
       
@@ -38,31 +51,45 @@ const RuntimeDialogue: React.FC<Props> = ({ data, onSelectChoice, onCancel }) =>
         i++;
         if (i >= fullText.length) {
           clearInterval(interval);
+          intervalRef.current = null;
           setIsTyping(false);
         }
       }, 30);
 
-      return () => clearInterval(interval);
+      intervalRef.current = interval;
+      return () => { clearInterval(interval); intervalRef.current = null; };
     }
-  }, [data.text, data.nodeId]); // Reset when node changes
+  }, [data.text, data.nodeId]);
 
   // Keyboard navigation
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (isTyping) {
-          return;
+      // Space skips typing animation
+      if (e.key === ' ' && isTyping) {
+        e.preventDefault();
+        if (intervalRef.current) {
+          clearInterval(intervalRef.current);
+          intervalRef.current = null;
+        }
+        setDisplayText(fullTextRef.current);
+        setIsTyping(false);
+        return;
       }
+
+      if (isTyping) return;
       
       const choicesCount = choices.length;
       if (choicesCount === 0) return;
 
       if (e.key === 'ArrowDown') {
-        setSelectedIndex(prev => (prev + 1) % choicesCount);
+        setHoveredIndex(prev => prev === null ? 0 : (prev + 1) % choicesCount);
       } else if (e.key === 'ArrowUp') {
-        setSelectedIndex(prev => (prev - 1 + choicesCount) % choicesCount);
+        setHoveredIndex(prev => prev === null ? choicesCount - 1 : (prev - 1 + choicesCount) % choicesCount);
       } else if (e.key === 'Enter') {
-        const selectedChoice = choices[selectedIndex];
-        if (selectedChoice) onSelectChoice(selectedChoice.id);
+        if (hoveredIndex !== null) {
+          const selectedChoice = choices[hoveredIndex];
+          if (selectedChoice) onSelectChoice(selectedChoice.id);
+        }
       } else if (['1', '2', '3', '4'].includes(e.key)) {
         const idx = parseInt(e.key) - 1;
         if (idx < choicesCount) {
@@ -76,92 +103,58 @@ const RuntimeDialogue: React.FC<Props> = ({ data, onSelectChoice, onCancel }) =>
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [isTyping, choices, selectedIndex, onSelectChoice, onCancel]);
+  }, [isTyping, choices, hoveredIndex, onSelectChoice, onCancel]);
 
   return (
-    <div className="fixed inset-0 z-[999] flex flex-col justify-end pointer-events-none">
-      
-      <div className="relative z-20 w-full max-w-xl mx-auto px-6 pb-8 space-y-4 pointer-events-auto">
-        
-        {/* NPC Identifier Header */}
-        <div className="flex items-center gap-3 animate-in fade-in slide-in-from-left duration-700">
-            <div className="flex flex-col gap-0.5">
-            <div className="w-5 h-[2px] bg-zinc-100"></div>
-            <div className="w-2 h-[2px] bg-zinc-800"></div>
-            </div>
-            <div>
-            <h2 className="text-zinc-500 text-[8px] font-black tracking-[0.3em] uppercase mb-0.5">INTERACTION</h2>
-            <h3 className="text-lg font-black text-zinc-100 tracking-tight uppercase shadow-black drop-shadow-md">{data.name || 'NPC'}</h3>
-            </div>
+    <div className="fixed inset-0 z-[999] flex flex-col justify-end items-center pointer-events-none" style={{ paddingBottom: '5rem', userSelect: 'none' }}>
+
+      <div className="w-full flex flex-col gap-6 pointer-events-auto" style={{ maxWidth: '540px', padding: '0 1.5rem', fontFamily: "'Poppins', sans-serif" }}>
+
+        {/* NPC Name */}
+        <div className="flex flex-row gap-4 items-center">
+          <h1 className="text-2xl font-bold text-white drop-shadow-md" style={{ textShadow: '1px 1px 2px rgba(0, 0, 0, 0.5)' }}>
+            {data.name || 'NPC'}
+          </h1>
         </div>
 
-        {/* Content Box */}
-        <div className="space-y-4">
-            <div className="min-h-[50px]">
-            <p className="text-base font-medium text-zinc-200 leading-snug tracking-tight drop-shadow-md shadow-black">
-                {displayText}
-                {isTyping && <span className="w-1 h-4 bg-zinc-100 ml-1 inline-block animate-pulse"></span>}
-            </p>
-            </div>
+        {/* Divider */}
+        <div className="w-1/3 h-[1px] rounded-lg" style={{ backgroundColor: 'rgba(255,255,255,0.2)' }}></div>
 
-            {/* Choices List */}
-            <div className={`space-y-1.5 transition-all duration-700 ${isTyping ? 'opacity-0 translate-y-4' : 'opacity-100 translate-y-0'}`}>
+        {/* Dialogue Text */}
+        <div>
+          <p className="text-lg font-bold text-white drop-shadow-md" style={{ textShadow: '1px 1px 2px rgba(0, 0, 0, 0.5)' }}>
+            {displayText}
+            {isTyping && <span className="w-1 h-5 bg-white ml-1 inline-block animate-pulse"></span>}
+          </p>
+        </div>
+
+        {/* Choices Grid */}
+        {choices.length > 0 && (
+          <div
+            key={data.nodeId}
+            className="grid grid-cols-2 gap-3"
+            style={isTyping
+              ? { opacity: 0, transform: 'translateY(1rem)', visibility: 'hidden' }
+              : { opacity: 1, transform: 'translateY(0)', transition: 'opacity 0.7s, transform 0.7s' }
+            }
+          >
             {choices.map((choice, idx) => (
-                <button
+              <button
                 key={choice.id}
                 onClick={() => onSelectChoice(choice.id)}
-                onMouseEnter={() => setSelectedIndex(idx)}
-                className={`
-                    group w-full relative flex items-center justify-between px-4 py-2.5 transition-all duration-300 rounded-sm
-                    ${selectedIndex === idx 
-                    ? 'bg-zinc-100 text-zinc-950 translate-x-2 shadow-xl' 
-                    : 'bg-zinc-950/80 text-zinc-400 border border-zinc-800/50 hover:text-zinc-200'
-                    }
-                `}
-                >
-                <div className="flex items-center gap-3">
-                    <span className={`text-[9px] font-black font-mono transition-colors ${selectedIndex === idx ? 'text-zinc-950/50' : 'text-zinc-600'}`}>
-                    0{idx + 1}
-                    </span>
-                    <span className="text-xs font-bold tracking-wide uppercase">{choice.text}</span>
-                </div>
-                
-                {selectedIndex === idx && (
-                    <div className="animate-in slide-in-from-left-2 duration-300">
-                    <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path strokeLinecap="square" strokeLinejoin="miter" strokeWidth={2.5} d="M17 8l4 4m0 0l-4 4m4-4H3" />
-                    </svg>
-                    </div>
-                )}
-                </button>
+                onMouseEnter={() => setHoveredIndex(idx)}
+                onMouseLeave={() => setHoveredIndex(null)}
+                className="py-3 px-4 rounded-sm font-bold text-sm transition-all duration-200 shadow-sm"
+                style={{
+                  backgroundColor: hoveredIndex === idx ? ACCENT_COLOR : 'white',
+                  color: hoveredIndex === idx ? 'white' : 'black',
+                }}
+              >
+                {choice.text}
+              </button>
             ))}
-            
-            {choices.length === 0 && !isTyping && (
-                 <div className="text-[10px] text-zinc-500 font-mono animate-pulse">Waiting for event...</div>
-            )}
-            </div>
-        </div>
-
-        {/* Hints Footer */}
-        <div className="flex items-center justify-center gap-6 pt-4 opacity-50 animate-in fade-in duration-1000 delay-500">
-            <div className="flex items-center gap-2">
-                <div className="flex gap-0.5">
-                    <div className="w-4 h-4 border border-zinc-600 rounded-[2px] flex items-center justify-center text-[8px] font-bold text-zinc-400">↑</div>
-                    <div className="w-4 h-4 border border-zinc-600 rounded-[2px] flex items-center justify-center text-[8px] font-bold text-zinc-400">↓</div>
-                </div>
-                <span className="text-[9px] font-bold tracking-wider text-zinc-500 uppercase">NAVIGATE</span>
-            </div>
-            <div className="w-[1px] h-3 bg-zinc-800"></div>
-            <div className="flex items-center gap-2">
-                <div className="h-4 px-1.5 border border-zinc-600 rounded-[2px] flex items-center justify-center text-[8px] font-bold text-zinc-400">ENTER</div>
-                <span className="text-[9px] font-bold tracking-wider text-zinc-500 uppercase">SELECT</span>
-            </div>
-            <div className="w-[1px] h-3 bg-zinc-800"></div>
-            <div className="flex items-center gap-2">
-                <div className="h-4 px-1.5 border border-zinc-600 rounded-[2px] flex items-center justify-center text-[8px] font-bold text-zinc-400">ESC</div>
-                <span className="text-[9px] font-bold tracking-wider text-zinc-500 uppercase">LEAVE</span>
-            </div>
-        </div>
+          </div>
+        )}
 
       </div>
     </div>

@@ -626,10 +626,20 @@ const NodeEditor: React.FC<NodeEditorProps> = ({ project, setProject }) => {
                     </>
                 );
                 if (node.type === NodeType.EVENT) return (
-                  <div className="space-y-3">
-                      <label className="text-[9px] font-black text-zinc-600 uppercase tracking-widest">{t('editor.event_name')}</label>
-                      <input type="text" value={node.data.eventName || ''} onChange={(e) => updateData('eventName', e.target.value)} className="w-full bg-zinc-900 border-b border-zinc-800 py-2 text-[11px] font-mono text-zinc-300 focus:outline-none focus:border-zinc-400" />
-                  </div>
+                  <>
+                    <div className="space-y-3">
+                        <label className="text-[9px] font-black text-zinc-600 uppercase tracking-widest">{t('editor.event_name')}</label>
+                        <input type="text" value={node.data.eventName || ''} onChange={(e) => updateData('eventName', e.target.value)} className="w-full bg-zinc-900 border-b border-zinc-800 py-2 text-[11px] font-mono text-zinc-300 focus:outline-none focus:border-zinc-400" />
+                    </div>
+                    <div className="space-y-3">
+                        <label className="text-[9px] font-black text-zinc-600 uppercase tracking-widest">{t('editor.event_payload')}</label>
+                        <input type="text" value={node.data.eventPayload || ''} onChange={(e) => updateData('eventPayload', e.target.value)} className="w-full bg-zinc-900 border-b border-zinc-800 py-2 text-[11px] font-mono text-zinc-300 focus:outline-none focus:border-zinc-400" placeholder="{key: 'value'}" />
+                    </div>
+                    <div className="flex items-center space-x-2">
+                        <input type="checkbox" id="isServer" checked={node.data.isServer || false} onChange={(e) => updateData('isServer', e.target.checked)} className="bg-zinc-900 border border-zinc-800 rounded" />
+                        <label htmlFor="isServer" className="text-[9px] font-black text-zinc-600 uppercase tracking-widest">{t('editor.is_server_event')}</label>
+                    </div>
+                  </>
                 );
 
                 if (node.type === NodeType.START) return (
