@@ -1,6 +1,7 @@
 local Interactions = {}
 local SpawnedEntities = {}
 local ActiveZones = {}
+local InteractionMemory = {}
 local cam = nil
 local talkLoopToken = 0
 local activeTalkProjectId = nil
@@ -136,6 +137,19 @@ function SetupInteraction(project)
     SetEntityInvincible(ped, true)
     SetBlockingOfNonTemporaryEvents(ped, true)
     
+    -- Play idle animation from START node (if configured)
+    if startNode.data.animDict and startNode.data.animName
+       and startNode.data.animDict ~= '' and startNode.data.animName ~= '' then
+        local idleDict = startNode.data.animDict
+        local idleAnim = startNode.data.animName
+        RequestAnimDict(idleDict)
+        local t = 0
+        while not HasAnimDictLoaded(idleDict) and t < 1000 do Wait(10) t = t + 10 end
+        if HasAnimDictLoaded(idleDict) then
+            TaskPlayAnim(ped, idleDict, idleAnim, 8.0, -8.0, -1, 1, 0, false, false, false)
+        end
+    end
+
     SpawnedEntities[project.id] = ped
     
     -- Setup Interaction (Target or TextUI)
@@ -174,13 +188,27 @@ function SetupInteraction(project)
 end
 
 local playedGreeting = {}
-function StartInteraction(project)
+function StartInteraction(project, customVars)
     -- Find Start Node
     local startNode = nil
     for _, node in ipairs(project.data.nodes) do
         if node.type == 'START' then startNode = node break end
     end
     if startNode then
+        -- Reset interaction memory and inject custom variables
+        InteractionMemory = {}
+        if customVars and type(customVars) == 'table' then
+            for k, v in pairs(customVars) do
+                InteractionMemory[k] = tostring(v)
+            end
+            if Config.Debug then
+                print('[RC-Interactions] Injected custom variables: ' .. json.encode(customVars))
+            end
+        end
+
+        -- Notify server that this player is starting a session (security)
+        TriggerServerEvent('rc-interactions:server:startSession', project.id)
+
         -- Setup Camera and Ped
         local ped = SpawnedEntities[project.id]
         if DoesEntityExist(ped) then
@@ -201,10 +229,23 @@ function ProcessNode(project, node)
         ProcessNode(project, nextNode)
         
     elseif node.type == 'DIALOGUE' then
-        -- Play Anim
+        -- Play per-node custom animation if configured, otherwise use default talk anim
         local ped = SpawnedEntities[project.id]
         if DoesEntityExist(ped) then
-            PlayTalkAnim(ped)
+            if node.data.animDict and node.data.animName and node.data.animDict ~= '' and node.data.animName ~= '' then
+                local dict = node.data.animDict
+                local anim = node.data.animName
+                RequestAnimDict(dict)
+                local timeout = 0
+                while not HasAnimDictLoaded(dict) and timeout < 500 do Wait(10) timeout = timeout + 10 end
+                if HasAnimDictLoaded(dict) then
+                    ClearPedTasks(ped)
+                    TaskPlayAnim(ped, dict, anim, 8.0, -8.0, -1, 1, 0, false, false, false)
+                end
+            else
+                PlayTalkAnim(ped)
+            end
+            EnsureNpcTalkLoop(project.id, ped)
             if not playedGreeting[project.id] then
                 local greetLine = GREETING_SPEECH_LINES[math.random(1, #GREETING_SPEECH_LINES)]
                 PlayAmbientSpeech1(ped, greetLine, SPEECH_PARAMS)
@@ -236,14 +277,41 @@ function ProcessNode(project, node)
         -- Destroy Cam
         DestroyInteractionCam()
 
+        -- Clear interaction memory
+        InteractionMemory = {}
+
+        -- End server session (security)
+        TriggerServerEvent('rc-interactions:server:endSession')
+
         -- Close UI
         SetNuiFocus(false, false)
         SendNUIMessage({ action = 'closeDialogue' })
+        
+        -- Trigger event for external integrations
+        TriggerEvent('rc-interactions:dialogueEnded', {
+            projectId = project.id,
+            cancelled = false
+        })
+        if Config.Debug then
+            print('[RC-Interactions] Dialogue ended - Project: ' .. project.id .. ' | Cancelled: false')
+        end
         
     elseif node.type == 'CONDITION' then
         local result = CheckCondition(node.data)
         local portId = result and 'true' or 'false'
         local nextNode = FindNextNode(project, node.id, portId)
+        ProcessNode(project, nextNode)
+
+    elseif node.type == 'SET_VARIABLE' then
+        -- Store variable in memory
+        if node.data.variableName then
+            InteractionMemory[node.data.variableName] = node.data.variableValue or ''
+            if Config.Debug then
+                print('[RC-Interactions] Set variable: ' .. node.data.variableName .. ' = ' .. tostring(node.data.variableValue))
+            end
+        end
+        -- Continue to next node
+        local nextNode = FindNextNode(project, node.id, 'main')
         ProcessNode(project, nextNode)
 
     elseif node.type == 'EVENT' then
@@ -258,20 +326,314 @@ function ProcessNode(project, node)
         -- Continue
         local nextNode = FindNextNode(project, node.id, 'main')
         ProcessNode(project, nextNode)
+
+    elseif node.type == 'GIVE_ITEM' then
+        -- Secure: send only projectId + nodeId; server resolves item/count from its cache
+        TriggerServerEvent('rc-interactions:server:processNode', project.id, node.id)
+        if Config.Debug then
+            print('[RC-Interactions] Give item (secure): project=' .. project.id .. ' node=' .. node.id)
+        end
+        local nextNode = FindNextNode(project, node.id, 'main')
+        ProcessNode(project, nextNode)
+
+    elseif node.type == 'REMOVE_ITEM' then
+        -- Secure: send only projectId + nodeId; server resolves item/count from its cache
+        TriggerServerEvent('rc-interactions:server:processNode', project.id, node.id)
+        if Config.Debug then
+            print('[RC-Interactions] Remove item (secure): project=' .. project.id .. ' node=' .. node.id)
+        end
+        local nextNode = FindNextNode(project, node.id, 'main')
+        ProcessNode(project, nextNode)
+
+    elseif node.type == 'GIVE_MONEY' then
+        -- Secure: send only projectId + nodeId; server resolves type/amount from its cache
+        TriggerServerEvent('rc-interactions:server:processNode', project.id, node.id)
+        if Config.Debug then
+            print('[RC-Interactions] Give money (secure): project=' .. project.id .. ' node=' .. node.id)
+        end
+        local nextNode = FindNextNode(project, node.id, 'main')
+        ProcessNode(project, nextNode)
+
+    elseif node.type == 'REMOVE_MONEY' then
+        -- Secure: send only projectId + nodeId; server resolves type/amount from its cache
+        TriggerServerEvent('rc-interactions:server:processNode', project.id, node.id)
+        if Config.Debug then
+            print('[RC-Interactions] Remove money (secure): project=' .. project.id .. ' node=' .. node.id)
+        end
+        local nextNode = FindNextNode(project, node.id, 'main')
+        ProcessNode(project, nextNode)
+
+    elseif node.type == 'ANIMATION' then
+        -- Play animation on NPC or player
+        local dict = node.data.animDict or ''
+        local anim = node.data.animName or ''
+        local target = node.data.animTarget or 'npc'
+        local duration = tonumber(node.data.animDuration) or 3000
+
+        if dict ~= '' and anim ~= '' then
+            RequestAnimDict(dict)
+            local timeout = 0
+            while not HasAnimDictLoaded(dict) and timeout < 500 do Wait(10) timeout = timeout + 10 end
+
+            if HasAnimDictLoaded(dict) then
+                local targetPed
+                if target == 'player' then
+                    targetPed = PlayerPedId()
+                else
+                    targetPed = SpawnedEntities[project.id]
+                end
+
+                if targetPed and DoesEntityExist(targetPed) then
+                    ClearPedTasks(targetPed)
+                    TaskPlayAnim(targetPed, dict, anim, 8.0, -8.0, duration, 0, 0, false, false, false)
+                    if Config.Debug then
+                        print('[RC-Interactions] Animation: ' .. target .. ' plays ' .. dict .. '/' .. anim .. ' for ' .. duration .. 'ms')
+                    end
+                end
+            end
+        end
+
+        -- Wait for the animation duration before continuing
+        Wait(duration)
+        local nextNode = FindNextNode(project, node.id, 'main')
+        ProcessNode(project, nextNode)
+
+    elseif node.type == 'WAIT' then
+        -- Timed pause before continuing
+        local duration = tonumber(node.data.waitDuration) or 2000
+        if Config.Debug then
+            print('[RC-Interactions] Wait: ' .. duration .. 'ms')
+        end
+        Wait(duration)
+        local nextNode = FindNextNode(project, node.id, 'main')
+        ProcessNode(project, nextNode)
+
+    elseif node.type == 'RANDOM' then
+        -- Random branching with weighted outputs
+        local outputs = node.data.randomOutputs or {}
+        if #outputs > 0 then
+            local totalWeight = 0
+            for _, output in ipairs(outputs) do
+                totalWeight = totalWeight + (tonumber(output.weight) or 0)
+            end
+            
+            local roll = math.random() * totalWeight
+            local selectedId = outputs[1].id
+            for _, output in ipairs(outputs) do
+                roll = roll - (tonumber(output.weight) or 0)
+                if roll <= 0 then
+                    selectedId = output.id
+                    break
+                end
+            end
+
+            if Config.Debug then
+                print('[RC-Interactions] Random: selected output ' .. tostring(selectedId))
+            end
+
+            local nextNode = FindNextNode(project, node.id, selectedId)
+            ProcessNode(project, nextNode)
+        else
+            -- No outputs configured, try main
+            local nextNode = FindNextNode(project, node.id, 'main')
+            ProcessNode(project, nextNode)
+        end
+
+    elseif node.type == 'TELEPORT' then
+        -- Teleport the player to specific coordinates
+        local tc = node.data.teleportCoords
+        if tc and tc.x and tc.y and tc.z then
+            local heading = tc.w or 0.0
+            SetEntityCoords(PlayerPedId(), tc.x + 0.0, tc.y + 0.0, tc.z + 0.0, false, false, false, true)
+            SetEntityHeading(PlayerPedId(), heading + 0.0)
+            if Config.Debug then
+                print('[RC-Interactions] Teleport: ' .. tc.x .. ', ' .. tc.y .. ', ' .. tc.z)
+            end
+        end
+        local nextNode = FindNextNode(project, node.id, 'main')
+        ProcessNode(project, nextNode)
+
+    elseif node.type == 'NPC_CHANGE' then
+        -- Change the NPC model mid-conversation
+        local newModel = node.data.newModel or 'a_m_y_business_01'
+        local ped = SpawnedEntities[project.id]
+        
+        if ped and DoesEntityExist(ped) then
+            local coords = GetEntityCoords(ped)
+            local heading = GetEntityHeading(ped)
+            
+            -- Delete old ped
+            DeleteEntity(ped)
+            
+            -- Create new ped
+            local hash = GetHashKey(newModel)
+            RequestModel(hash)
+            local timeout = 0
+            while not HasModelLoaded(hash) and timeout < 5000 do Wait(10) timeout = timeout + 10 end
+            
+            if HasModelLoaded(hash) then
+                local newPed = CreatePed(4, hash, coords.x, coords.y, coords.z, heading, false, true)
+                FreezeEntityPosition(newPed, true)
+                SetEntityInvincible(newPed, true)
+                SetBlockingOfNonTemporaryEvents(newPed, true)
+                SpawnedEntities[project.id] = newPed
+                
+                -- Apply optional animation
+                if node.data.newAnimDict and node.data.newAnimName and node.data.newAnimDict ~= '' and node.data.newAnimName ~= '' then
+                    local dict = node.data.newAnimDict
+                    local anim = node.data.newAnimName
+                    RequestAnimDict(dict)
+                    local t2 = 0
+                    while not HasAnimDictLoaded(dict) and t2 < 500 do Wait(10) t2 = t2 + 10 end
+                    if HasAnimDictLoaded(dict) then
+                        TaskPlayAnim(newPed, dict, anim, 8.0, -8.0, -1, 1, 0, false, false, false)
+                    end
+                end
+                
+                -- Re-point camera at new ped
+                CreateInteractionCam(newPed)
+                
+                if Config.Debug then
+                    print('[RC-Interactions] NPC Change: model=' .. newModel)
+                end
+            end
+        end
+        
+        local nextNode = FindNextNode(project, node.id, 'main')
+        ProcessNode(project, nextNode)
+
+    elseif node.type == 'SOUND' then
+        -- Play a sound effect
+        local soundName = node.data.soundName or ''
+        if soundName ~= '' then
+            -- Use GTA native PlaySoundFrontend for known sounds
+            PlaySoundFrontend(-1, soundName, "HUD_FRONTEND_DEFAULT_SOUNDSET", true)
+            if Config.Debug then
+                print('[RC-Interactions] Sound: ' .. soundName .. ' vol=' .. tostring(node.data.soundVolume or 50))
+            end
+        end
+        local nextNode = FindNextNode(project, node.id, 'main')
+        ProcessNode(project, nextNode)
     end
+end
+
+-- ══════════════════════════════════════════════════════════
+-- GetPlayerVariable(name)
+-- Resolves a player:<name> variable to a runtime value.
+-- Returns number | string | boolean | nil
+-- ══════════════════════════════════════════════════════════
+function GetPlayerVariable(name)
+    local ped = PlayerPedId()
+
+    -- ── GTA native values ──
+    if name == 'health'      then return GetEntityHealth(ped) end
+    if name == 'armor'       then return GetPedArmour(ped) end
+    if name == 'stamina'     then return math.floor(100.0 - GetPlayerSprintStaminaRemaining(PlayerId())) end
+    if name == 'is_dead'     then return IsEntityDead(ped) end
+    if name == 'is_wanted'   then return GetPlayerWantedLevel(PlayerId()) end
+    if name == 'in_vehicle'  then return IsPedInAnyVehicle(ped, false) end
+    if name == 'speed'       then return math.floor(GetEntitySpeed(ped) * 3.6) end -- km/h
+    if name == 'weapon'      then
+        local _, hash = GetCurrentPedWeapon(ped)
+        return tostring(hash)
+    end
+    if name == 'is_swimming' then return IsPedSwimming(ped) end
+    if name == 'is_falling'  then return IsPedFalling(ped) end
+    if name == 'is_running'  then return IsPedRunning(ped) end
+
+    -- ── Framework-dependent values ──
+    if Bridge.Framework == 'qbcore' then
+        local QBCore = exports['qb-core']:GetCoreObject()
+        local pData = QBCore.Functions.GetPlayerData()
+        if not pData then return nil end
+
+        if name == 'name'         then return (pData.charinfo and (pData.charinfo.firstname .. ' ' .. pData.charinfo.lastname)) or 'Unknown' end
+        if name == 'job_name'     then return pData.job and pData.job.name or 'unemployed' end
+        if name == 'job_grade'    then return pData.job and pData.job.grade and pData.job.grade.level or 0 end
+        if name == 'gang_name'    then return pData.gang and pData.gang.name or 'none' end
+        if name == 'citizenid'    then return pData.citizenid or '' end
+        if name == 'gender'       then return pData.charinfo and pData.charinfo.gender or 0 end
+        if name == 'phone_number' then return pData.charinfo and pData.charinfo.phone or '' end
+
+    elseif Bridge.Framework == 'esx' then
+        local pData = Bridge.ESX and Bridge.ESX.GetPlayerData and Bridge.ESX.GetPlayerData()
+        if not pData then return nil end
+
+        if name == 'name'         then
+            return (pData.firstName or '') .. ' ' .. (pData.lastName or '')
+        end
+        if name == 'job_name'     then return pData.job and pData.job.name or 'unemployed' end
+        if name == 'job_grade'    then return pData.job and pData.job.grade or 0 end
+        if name == 'gang_name'    then return 'none' end -- ESX no tiene gangs por defecto
+        if name == 'citizenid'    then return pData.identifier or '' end
+        if name == 'gender'       then return pData.sex or 'unknown' end
+        if name == 'phone_number' then return pData.phoneNumber or '' end
+    end
+
+    return nil
+end
+
+-- ══════════════════════════════════════════════════════════
+-- ResolveVariable(key)
+-- Resolves any variable key to its runtime value as a string.
+-- Supports: player:X, money:X, item:X, job:X, and plain memory keys.
+-- ══════════════════════════════════════════════════════════
+function ResolveVariable(key)
+    if not key or key == '' then return '' end
+    local varType, varName = key:match("([^:]+):(.+)")
+    if not varType then
+        -- Plain memory variable
+        return InteractionMemory[key] or ''
+    end
+    if varType == 'player' then
+        local val = GetPlayerVariable(varName)
+        if type(val) == 'boolean' then return val and '1' or '0' end
+        return tostring(val or '')
+    elseif varType == 'money' then
+        return tostring(Bridge.GetMoney(GetPlayerServerId(PlayerId()), varName) or 0)
+    elseif varType == 'item' then
+        return Bridge.HasItem(GetPlayerServerId(PlayerId()), varName, 1) and '1' or '0'
+    elseif varType == 'job' then
+        return Bridge.HasGroup(GetPlayerServerId(PlayerId()), varName) and '1' or '0'
+    end
+    return ''
 end
 
 function CheckCondition(data)
     if not data then return false end
+
+    -- ── Resolve the target value (supports $varRef) ──
+    local rawTarget = data.variableValue or ''
+    local resolvedTarget = rawTarget
+    if rawTarget:sub(1, 1) == '$' then
+        local refKey = rawTarget:sub(2)
+        resolvedTarget = tostring(ResolveVariable(refKey))
+    end
     
     local varType, varName = data.variableName:match("([^:]+):(.+)")
     if not varType then 
-        -- Fallback for simple variables or custom logic
+        -- Fallback: check InteractionMemory for simple variables (set by SET_VARIABLE nodes)
+        local memValue = InteractionMemory[data.variableName] or ''
+        local targetValue = resolvedTarget
+        local op = data.conditionOperator or '=='
+
+        local numA = tonumber(memValue)
+        local numB = tonumber(targetValue)
+        local isNumeric = numA ~= nil and numB ~= nil
+
+        if op == '==' then return memValue == targetValue
+        elseif op == '!=' then return memValue ~= targetValue
+        elseif op == '>' then return isNumeric and numA > numB or false
+        elseif op == '<' then return isNumeric and numA < numB or false
+        elseif op == '>=' then return isNumeric and numA >= numB or false
+        elseif op == '<=' then return isNumeric and numA <= numB or false
+        end
+
         return false 
     end
 
     local currentValue = nil
-    local targetValue = tonumber(data.variableValue) or data.variableValue
+    local targetValue = tonumber(resolvedTarget) or resolvedTarget
 
     if varType == 'item' then
         currentValue = Bridge.HasItem(GetPlayerServerId(PlayerId()), varName, 1) and 1 or 0
@@ -291,16 +653,52 @@ function CheckCondition(data)
         end
 
     elseif varType == 'money' then
-        -- We don't have GetMoney in client bridge yet, only server side usually has secure money.
-        -- But we can try to get it if framework allows.
-        -- For QBCore client: QBCore.Functions.GetPlayerData().money[type]
-        -- For ESX client: ESX.GetPlayerData().accounts...
-        -- Let's implement a Bridge.GetMoney(type) in client bridge later or use server callback.
-        -- For now, return false or implement client side check.
-        return false 
+        currentValue = Bridge.GetMoney(GetPlayerServerId(PlayerId()), varName)
+        local op = data.conditionOperator or '=='
+        local numCurrent = tonumber(currentValue) or 0
+        local numTarget = tonumber(targetValue) or 0
+
+        if op == '==' then return numCurrent == numTarget
+        elseif op == '!=' then return numCurrent ~= numTarget
+        elseif op == '>' then return numCurrent > numTarget
+        elseif op == '<' then return numCurrent < numTarget
+        elseif op == '>=' then return numCurrent >= numTarget
+        elseif op == '<=' then return numCurrent <= numTarget
+        end
+        return false
         
     elseif varType == 'job' then
         return Bridge.HasGroup(GetPlayerServerId(PlayerId()), varName)
+
+    elseif varType == 'player' then
+        -- Resolve player property from GTA natives or framework data
+        currentValue = GetPlayerVariable(varName)
+        if currentValue == nil then return false end
+
+        local op = data.conditionOperator or '=='
+        local targetStr = resolvedTarget
+
+        -- Normalize booleans to "1"/"0" strings
+        if type(currentValue) == 'boolean' then
+            currentValue = currentValue and '1' or '0'
+        else
+            currentValue = tostring(currentValue)
+        end
+
+        local numA = tonumber(currentValue)
+        local numB = tonumber(targetStr)
+        local isNumeric = numA ~= nil and numB ~= nil
+
+        if op == '==' then
+            return isNumeric and numA == numB or currentValue == targetStr
+        elseif op == '!=' then
+            return isNumeric and numA ~= numB or currentValue ~= targetStr
+        elseif op == '>'  then return isNumeric and numA > numB or false
+        elseif op == '<'  then return isNumeric and numA < numB or false
+        elseif op == '>=' then return isNumeric and numA >= numB or false
+        elseif op == '<=' then return isNumeric and numA <= numB or false
+        end
+        return false
     end
 
     return false
@@ -349,13 +747,36 @@ RegisterNUICallback('cancelInteraction', function(data, cb)
     StopNpcTalkLoop(true)
     
     DestroyInteractionCam()
+
+    -- Clear interaction memory
+    InteractionMemory = {}
+
+    -- End server session (security)
+    TriggerServerEvent('rc-interactions:server:endSession')
+
     SetNuiFocus(false, false)
     SendNUIMessage({ action = 'closeDialogue' })
+    
+    -- Trigger event for external integrations
+    TriggerEvent('rc-interactions:dialogueEnded', {
+        projectId = projectId,
+        cancelled = true
+    })
+    if Config.Debug then
+        print('[RC-Interactions] Dialogue ended - Project: ' .. tostring(projectId) .. ' | Cancelled: true')
+    end
+    
     cb('ok')
 end)
 
--- Public API: allow other scripts to start a flow by UUID without the editor
-local function StartInteractionById(projectId)
+-- Public API: allow other scripts to start a flow by UUID without the editor.
+-- customVars (optional table) — key/value pairs injected into InteractionMemory
+-- before the flow starts so CONDITION nodes can reference them.
+--
+-- Usage:
+--   exports['rc-interactions']:StartInteractionById('uuid', { quest_stage = '3', rank = 'gold' })
+--   TriggerEvent('rc-interactions:client:startInteractionById', 'uuid', { quest_stage = '3' })
+function StartInteractionById(projectId, customVars)
     if not projectId then return false end
 
     local project = nil
@@ -368,7 +789,7 @@ local function StartInteractionById(projectId)
         return false
     end
 
-    StartInteraction(project)
+    StartInteraction(project, customVars)
     return true
 end
 
@@ -386,6 +807,10 @@ end
 exports('GetPedByProjectId', GetPedByProjectId)
 exports('StartInteractionById', StartInteractionById)
 
-RegisterNetEvent('rc-interactions:client:startInteractionById', function(projectId)
-    StartInteractionById(projectId)
+RegisterNetEvent('rc-interactions:client:startInteractionById', function(projectId, customVars)
+    StartInteractionById(projectId, customVars)
 end)
+
+function _RCI_GetMemory()      return InteractionMemory end
+function _RCI_SetMemory(t)     InteractionMemory = t end
+function _RCI_GetInteractions() return Interactions end

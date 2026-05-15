@@ -16,6 +16,11 @@
         overflow: hidden;
         display: none;
       }
+      /* When running in a regular browser (dev mode), show by default */
+      body.dev-mode {
+        display: block !important;
+        background-color: #09090b;
+      }
       .custom-scrollbar::-webkit-scrollbar {
         width: 3px;
         height: 3px;

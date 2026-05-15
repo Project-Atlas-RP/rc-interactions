@@ -18,7 +18,33 @@ const GameSimulator: React.FC<GameSimulatorProps> = ({ project }) => {
   const [isInteractionActive, setIsInteractionActive] = useState(false);
   
   const [hasStarted, setHasStarted] = useState(false);
-  const memoryRef = useRef<GameMemory>({ honor_level: 55 });
+  const memoryRef = useRef<GameMemory>({
+    honor_level: 55,
+    // Mock game variables for simulator
+    'player:health': 180,
+    'player:armor': 50,
+    'player:x': 200, 'player:y': 300, 'player:z': 30,
+    'player:heading': 90,
+    'player:speed': 0,
+    'player:ped_id': 12345,
+    'player:server_id': 1,
+    'player:name': 'TestPlayer',
+    'player:is_dead': 0, 'player:is_in_vehicle': 0,
+    'player:vehicle_model': '', 'player:vehicle_seat': -1,
+    'player:weapon': 'WEAPON_UNARMED', 'player:ammo': 0,
+    'player:wanted_level': 0, 'player:is_swimming': 0, 'player:is_falling': 0,
+    'money:cash': 2500,
+    'money:bank': 15000,
+    'money:crypto': 0,
+    'item:bread': 0,
+    'item:water': 2,
+    'item:phone': 1,
+    'item:lockpick': 0,
+    'item:armor': 0,
+    'job:police': 0,
+    'job:ambulance': 0,
+    'job:mechanic': 0,
+  });
 
   const currentNode = project.nodes.find(n => n.id === currentNodeId);
 
@@ -49,8 +75,13 @@ const GameSimulator: React.FC<GameSimulatorProps> = ({ project }) => {
         }
 
         if (node.type === NodeType.CONDITION) {
-            const valA = memoryRef.current[node.data.variableName || ""]?.toString() || "";
-            const valB = node.data.variableValue || "";
+            const varName = node.data.variableName || '';
+            const valA = memoryRef.current[varName]?.toString() || '';
+            // Handle $ prefix — resolve variable reference
+            const rawTarget = node.data.variableValue || '';
+            const valB = rawTarget.startsWith('$')
+              ? (memoryRef.current[rawTarget.slice(1)]?.toString() || '')
+              : rawTarget;
             let result = false;
 
             const numA = parseFloat(valA);
@@ -69,6 +100,104 @@ const GameSimulator: React.FC<GameSimulatorProps> = ({ project }) => {
             console.log(`[SIM] Condition: ${valA} ${node.data.conditionOperator} ${valB} = ${result}`);
 
             const conn = project.connections.find(c => c.fromNodeId === node.id && c.fromPort === (result ? 'true' : 'false'));
+            if (!conn) return null;
+            currentId = conn.toNodeId;
+            continue;
+        }
+
+        // GIVE_ITEM / REMOVE_ITEM — pass through (simulated, no actual inventory)
+        if (node.type === NodeType.GIVE_ITEM) {
+            console.log(`[SIM] Give item: ${node.data.itemCount || 1}x ${node.data.itemName || 'item'}`);
+            const conn = project.connections.find(c => c.fromNodeId === node.id);
+            if (!conn) return null;
+            currentId = conn.toNodeId;
+            continue;
+        }
+
+        if (node.type === NodeType.REMOVE_ITEM) {
+            console.log(`[SIM] Remove item: ${node.data.itemCount || 1}x ${node.data.itemName || 'item'}`);
+            const conn = project.connections.find(c => c.fromNodeId === node.id);
+            if (!conn) return null;
+            currentId = conn.toNodeId;
+            continue;
+        }
+
+        // GIVE_MONEY / REMOVE_MONEY — pass through
+        if (node.type === NodeType.GIVE_MONEY) {
+            console.log(`[SIM] Give money: $${node.data.moneyAmount || 0} (${node.data.moneyType || 'cash'})`);
+            const conn = project.connections.find(c => c.fromNodeId === node.id);
+            if (!conn) return null;
+            currentId = conn.toNodeId;
+            continue;
+        }
+
+        if (node.type === NodeType.REMOVE_MONEY) {
+            console.log(`[SIM] Remove money: $${node.data.moneyAmount || 0} (${node.data.moneyType || 'cash'})`);
+            const conn = project.connections.find(c => c.fromNodeId === node.id);
+            if (!conn) return null;
+            currentId = conn.toNodeId;
+            continue;
+        }
+
+        // ANIMATION — pass through
+        if (node.type === NodeType.ANIMATION) {
+            console.log(`[SIM] Animation: ${node.data.animTarget || 'npc'} plays ${node.data.animDict}/${node.data.animName} for ${node.data.animDuration}ms`);
+            const conn = project.connections.find(c => c.fromNodeId === node.id);
+            if (!conn) return null;
+            currentId = conn.toNodeId;
+            continue;
+        }
+
+        // WAIT — pass through (instant in simulation)
+        if (node.type === NodeType.WAIT) {
+            console.log(`[SIM] Wait: ${node.data.waitDuration || 0}ms`);
+            const conn = project.connections.find(c => c.fromNodeId === node.id);
+            if (!conn) return null;
+            currentId = conn.toNodeId;
+            continue;
+        }
+
+        // RANDOM — weighted random branch
+        if (node.type === NodeType.RANDOM) {
+            const outputs = node.data.randomOutputs || [];
+            if (outputs.length === 0) return null;
+            const totalWeight = outputs.reduce((sum, o) => sum + (o.weight || 0), 0);
+            let roll = Math.random() * totalWeight;
+            let selectedOutput = outputs[0];
+            for (const output of outputs) {
+                roll -= (output.weight || 0);
+                if (roll <= 0) { selectedOutput = output; break; }
+            }
+            console.log(`[SIM] Random: selected output ${selectedOutput.id} (weight ${selectedOutput.weight}%)`);
+            const conn = project.connections.find(c => c.fromNodeId === node.id && c.fromPort === selectedOutput.id);
+            if (!conn) return null;
+            currentId = conn.toNodeId;
+            continue;
+        }
+
+        // TELEPORT — pass through
+        if (node.type === NodeType.TELEPORT) {
+            const tc = node.data.teleportCoords;
+            console.log(`[SIM] Teleport: ${tc?.x}, ${tc?.y}, ${tc?.z}`);
+            const conn = project.connections.find(c => c.fromNodeId === node.id);
+            if (!conn) return null;
+            currentId = conn.toNodeId;
+            continue;
+        }
+
+        // NPC_CHANGE — pass through
+        if (node.type === NodeType.NPC_CHANGE) {
+            console.log(`[SIM] NPC Change: model=${node.data.newModel}`);
+            const conn = project.connections.find(c => c.fromNodeId === node.id);
+            if (!conn) return null;
+            currentId = conn.toNodeId;
+            continue;
+        }
+
+        // SOUND — pass through
+        if (node.type === NodeType.SOUND) {
+            console.log(`[SIM] Sound: ${node.data.soundName} vol=${node.data.soundVolume}`);
+            const conn = project.connections.find(c => c.fromNodeId === node.id);
             if (!conn) return null;
             currentId = conn.toNodeId;
             continue;
@@ -103,10 +232,15 @@ const GameSimulator: React.FC<GameSimulatorProps> = ({ project }) => {
       if (nextId) setCurrentNodeId(nextId);
   };
 
-  const handleChoice = useCallback((nextNodeId: string | null) => {
-    if (isTyping || !nextNodeId) return;
+  const handleChoice = useCallback((choiceId: string, fromNodeId: string) => {
+    if (isTyping) return;
     
-    const actualNextId = traverseLogic(nextNodeId);
+    // Look up the target node from connections using the choice id as port
+    const conn = project.connections.find(c => c.fromNodeId === fromNodeId && c.fromPort === choiceId);
+    const targetNodeId = conn?.toNodeId || null;
+    if (!targetNodeId) return;
+    
+    const actualNextId = traverseLogic(targetNodeId);
     
     if (actualNextId) {
         const nextNode = project.nodes.find(n => n.id === actualNextId);
@@ -121,7 +255,7 @@ const GameSimulator: React.FC<GameSimulatorProps> = ({ project }) => {
         setIsInteractionActive(false);
         setHasStarted(false);
     }
-  }, [isTyping, traverseLogic, project.nodes]);
+  }, [isTyping, traverseLogic, project.nodes, project.connections]);
 
   useEffect(() => {
     if (currentNode?.type === NodeType.DIALOGUE && currentNode?.data.text && isInteractionActive) {
@@ -157,15 +291,21 @@ const GameSimulator: React.FC<GameSimulatorProps> = ({ project }) => {
       } else if (e.key === 'ArrowUp') {
         setHoveredIndex(prev => prev === null ? choicesCount - 1 : (prev - 1 + choicesCount) % choicesCount);
       } else if (e.key === 'Enter') {
+<<<<<<< HEAD
         if (hoveredIndex !== null) {
           const selectedChoice = currentNode?.data.choices?.[hoveredIndex];
           if (selectedChoice) handleChoice(selectedChoice.nextNodeId);
         }
       } else if (['1', '2', '3', '4'].includes(e.key)) {
+=======
+        const selectedChoice = currentNode?.data.choices?.[selectedIndex];
+        if (selectedChoice && currentNodeId) handleChoice(selectedChoice.id, currentNodeId);
+      } else if (['1', '2', '3', '4', '5'].includes(e.key)) {
+>>>>>>> xbymarcos/master
         const idx = parseInt(e.key) - 1;
         if (idx < choicesCount) {
           const choice = currentNode?.data.choices?.[idx];
-          if (choice) handleChoice(choice.nextNodeId);
+          if (choice && currentNodeId) handleChoice(choice.id, currentNodeId);
         }
       } else if (e.key === 'Escape') {
         setIsInteractionActive(false);
@@ -238,6 +378,7 @@ const GameSimulator: React.FC<GameSimulatorProps> = ({ project }) => {
                {currentNode.data.choices.map((choice, idx) => (
                  <button
                    key={choice.id}
+<<<<<<< HEAD
                    onClick={() => handleChoice(choice.nextNodeId)}
                    onMouseEnter={() => setHoveredIndex(idx)}
                    onMouseLeave={() => setHoveredIndex(null)}
@@ -246,6 +387,17 @@ const GameSimulator: React.FC<GameSimulatorProps> = ({ project }) => {
                      backgroundColor: hoveredIndex === idx ? ACCENT_COLOR : 'white',
                      color: hoveredIndex === idx ? 'white' : 'black',
                    }}
+=======
+                   onClick={() => currentNodeId && handleChoice(choice.id, currentNodeId)}
+                   onMouseEnter={() => setSelectedIndex(idx)}
+                   className={`
+                     group w-full relative flex items-center justify-between px-8 py-5 transition-all duration-300
+                     ${selectedIndex === idx 
+                       ? 'bg-zinc-100 text-zinc-950 translate-x-4 shadow-2xl' 
+                       : 'bg-zinc-900/40 text-zinc-500 border border-zinc-900/50 hover:text-zinc-300'
+                     }
+                   `}
+>>>>>>> xbymarcos/master
                  >
                    {choice.text}
                  </button>

@@ -7,7 +7,8 @@ import RuntimeDialogue from './components/RuntimeDialogue';
 import { Project, ProjectData, NodeType } from './types';
 import { useLanguage } from './contexts/LanguageContext';
 
-import { fetchNui } from './utils/fetchNui';
+import { fetchNui, isEnvBrowser } from './utils/fetchNui';
+import { generateUUID } from './utils/uuid';
 
 // --- MOCK DATA GENERATOR ---
 const generateMockProject = (id: string, name: string, group: string = 'General'): Project => ({
@@ -55,8 +56,23 @@ const App: React.FC = () => {
   const [editorVisible, setEditorVisible] = useState<boolean>(false);
   const [runtimeDialogue, setRuntimeDialogue] = useState<RuntimeDialogueData | null>(null);
 
+  const [exportModalOpen, setExportModalOpen] = useState(false);
+  const [importModalOpen, setImportModalOpen] = useState(false);
+  const [exportDataString, setExportDataString] = useState("");
+  const [importInput, setImportInput] = useState("");
+  const [copied, setCopied] = useState(false);
+
   // Derived state for the currently active project
   const currentProject = projects.find(p => p.id === currentProjectId);
+
+  // --- DEV MODE: auto-show UI when running in a regular browser ---
+  useEffect(() => {
+    if (isEnvBrowser()) {
+      document.body.classList.add('dev-mode');
+      document.body.style.display = 'block';
+      setEditorVisible(true);
+    }
+  }, []);
 
   // --- NUI LISTENERS ---
   useEffect(() => {
@@ -93,8 +109,19 @@ const App: React.FC = () => {
       }
     };
 
+    const handleKeyDown = (event: KeyboardEvent) => {
+        if (event.key === 'Escape') {
+            handleClose();
+        }
+    };
+
     window.addEventListener('message', handleMessage);
-    return () => window.removeEventListener('message', handleMessage);
+    window.addEventListener('keydown', handleKeyDown);
+
+    return () => {
+        window.removeEventListener('message', handleMessage);
+        window.removeEventListener('keydown', handleKeyDown);
+    };
   }, [editorVisible, runtimeDialogue]);
 
   const handleSelectRuntimeChoice = (choiceId: string) => {
@@ -115,9 +142,7 @@ const App: React.FC = () => {
   // --- CRUD OPERATIONS ---
 
   const handleCreateProject = (name: string, group: string = 'General') => {
-    const newId = `proj_${Date.now()}`; // Temporary ID, server should ideally assign UUID
-    // Better to use a UUID generator here if possible or let server handle it.
-    // For now, we use this.
+    const newId = `proj_${generateUUID()}`;
     const newProject = generateMockProject(newId, name, group);
     setProjects(prev => [newProject, ...prev]); 
     setCurrentProjectId(newId);
@@ -125,13 +150,11 @@ const App: React.FC = () => {
   };
 
   const handleDeleteProject = (id: string) => {
-    if (window.confirm(t('app.confirm_delete'))) {
-      fetchNui('deleteProject', { id });
-      setProjects(prev => prev.filter(p => p.id !== id));
-      if (currentProjectId === id) {
-        setCurrentProjectId(null);
-        setView('DASHBOARD');
-      }
+    fetchNui('deleteProject', { id });
+    setProjects(prev => prev.filter(p => p.id !== id));
+    if (currentProjectId === id) {
+      setCurrentProjectId(null);
+      setView('DASHBOARD');
     }
   };
 
@@ -162,10 +185,9 @@ const App: React.FC = () => {
        alert(t('dashboard.error_delete_general'));
        return;
      }
-     if (window.confirm(t('dashboard.confirm_delete_group', { name }))) {
-       setProjects(prev => prev.map(p => p.group === name ? { ...p, group: 'General' } : p));
-       setGroups(prev => prev.filter(g => g !== name));
-     }
+     
+     setProjects(prev => prev.map(p => p.group === name ? { ...p, group: 'General' } : p));
+     setGroups(prev => prev.filter(g => g !== name));
   };
 
   const handleUpdateCurrentProjectData = (newData: ProjectData | ((prev: ProjectData) => ProjectData)) => {
@@ -192,7 +214,7 @@ const App: React.FC = () => {
     ));
   };
 
-  // --- FILE EXPORT ---
+  // --- FILE EXPORT/IMPORT ---
 
   const handleExport = () => {
     if (!currentProject) return;
@@ -205,15 +227,154 @@ const App: React.FC = () => {
       project: currentProject
     };
 
-    const blob = new Blob([JSON.stringify(exportData, null, 2)], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `${currentProject.name.replace(/\s+/g, '_').toLowerCase()}.json`;
-    a.click();
+    const jsonString = JSON.stringify(exportData, null, 2);
+    const fileName = `${currentProject.name.replace(/\s+/g, '_').toLowerCase()}.json`;
+
+    // Try to force download
+    try {
+      const blob = new Blob([jsonString], { type: 'application/json' });
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.style.display = 'none';
+      a.href = url;
+      a.download = fileName;
+      document.body.appendChild(a);
+      a.click();
+      setTimeout(() => {
+        window.URL.revokeObjectURL(url);
+        document.body.removeChild(a);
+      }, 100);
+    } catch (err) {
+      console.error("Forced download failed, falling back to modal", err);
+    }
+
+    setExportDataString(jsonString);
+    setExportModalOpen(true);
+    setCopied(false);
+  };
+
+  const handleCopyExport = () => {
+    try {
+      const textArea = document.createElement("textarea");
+      textArea.value = exportDataString;
+      
+      // Ensure it's not visible but part of DOM
+      textArea.style.position = "fixed";
+      textArea.style.left = "-9999px";
+      textArea.style.top = "0";
+      document.body.appendChild(textArea);
+      
+      textArea.focus();
+      textArea.select();
+      
+      const successful = document.execCommand('copy');
+      document.body.removeChild(textArea);
+
+      if (successful) {
+        setCopied(true);
+        setTimeout(() => setCopied(false), 2000);
+      }
+    } catch (err) {
+      console.error("Fallback copy failed", err);
+    }
+  };
+
+  const handleImportProject = () => {
+    setImportInput("");
+    setImportModalOpen(true);
+  };
+
+  const validateProjectSchema = (proj: any): proj is Project => {
+    if (!proj || typeof proj !== 'object') return false;
+    if (typeof proj.name !== 'string' || !proj.name.trim()) return false;
+    if (!proj.data || typeof proj.data !== 'object') return false;
+    if (!Array.isArray(proj.data.nodes) || !Array.isArray(proj.data.connections)) return false;
+
+    // Validate each node has minimum required fields
+    for (const node of proj.data.nodes) {
+      if (!node.id || !node.type || !node.position) return false;
+      if (typeof node.position.x !== 'number' || typeof node.position.y !== 'number') return false;
+    }
+
+    // Validate each connection has required fields
+    for (const conn of proj.data.connections) {
+      if (!conn.id || !conn.fromNodeId || !conn.toNodeId) return false;
+    }
+
+    return true;
+  };
+
+  const processImportedData = (data: any) => {
+    // Determine if it's a raw project or an exported structure
+    let projectToImport: any = null;
+    
+    if (data.project && data.meta) {
+      projectToImport = data.project;
+    } else if (data.id && data.data) {
+       projectToImport = data;
+    }
+
+    if (!projectToImport || !validateProjectSchema(projectToImport)) {
+      return false;
+    }
+
+    // Regenerate ID to avoid conflicts
+    const newId = `proj_${generateUUID()}`;
+    const newProject: Project = {
+      ...projectToImport,
+      id: newId,
+      name: `${projectToImport.name} (Imported)`,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    };
+    
+    setProjects(prev => [newProject, ...prev]);
+    // Add group if it doesn't exist
+    if (!groups.includes(newProject.group)) {
+       setGroups(prev => [...prev, newProject.group]);
+    }
+    setImportModalOpen(false);
+    return true;
+  };
+
+  const executeImport = () => {
+    try {
+      const json = JSON.parse(importInput);
+      if (!processImportedData(json)) {
+        alert(t('app.invalid_json'));
+      }
+    } catch (err) {
+      console.error("Failed to parse project data", err);
+      alert(t('app.invalid_json'));
+    }
+  };
+
+  const handleFileImport = () => {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = 'application/json';
+    input.onchange = (e) => {
+      const file = (e.target as HTMLInputElement).files?.[0];
+      if (!file) return;
+
+      const reader = new FileReader();
+      reader.onload = (event) => {
+        try {
+          const json = JSON.parse(event.target?.result as string);
+          if (!processImportedData(json)) {
+            alert(t('app.invalid_json'));
+          }
+        } catch (err) {
+          alert(t('app.invalid_json'));
+        }
+      };
+      reader.readAsText(file);
+    };
+    input.click();
   };
   
   const handleClose = () => {
+      if (isEnvBrowser()) return; // Don't hide in dev mode
       fetchNui('hideFrame');
   };
 
@@ -223,6 +384,13 @@ const App: React.FC = () => {
 
   return (
     <div className={`h-screen w-screen flex flex-col text-zinc-200 selection:bg-zinc-200 selection:text-zinc-900 font-sans ${runtimeDialogue ? 'bg-transparent' : 'bg-[#09090b]'}`}>
+
+      {/* DEV MODE BANNER */}
+      {isEnvBrowser() && (
+        <div className="bg-amber-500/90 text-zinc-950 text-center py-1 text-[10px] font-black uppercase tracking-[0.3em] shrink-0 z-[999]">
+          ⚡ DEV MODE — Browser Preview — NUI callbacks are mocked
+        </div>
+      )}
 
       {runtimeDialogue ? (
         <RuntimeDialogue data={runtimeDialogue} onSelectChoice={handleSelectRuntimeChoice} onCancel={handleCancelRuntime} />
@@ -307,6 +475,7 @@ const App: React.FC = () => {
             onMove={handleMoveProject}
             onCreateGroup={handleCreateGroup}
             onDeleteGroup={handleDeleteGroup}
+            onImport={handleImportProject}
           />
         )}
 
@@ -325,6 +494,90 @@ const App: React.FC = () => {
           </div>
         )}
       </main>
+
+      {/* EXPORT MODAL */}
+      {exportModalOpen && (
+        <div className="fixed inset-0 z-[300] flex items-center justify-center bg-black/80 backdrop-blur-md animate-in fade-in duration-200">
+           <div className="w-full max-w-2xl bg-zinc-950 border border-zinc-800 shadow-2xl p-8 animate-in zoom-in-95 duration-200 rounded-sm">
+              <div className="flex justify-between items-start mb-6">
+                <div>
+                  <h2 className="text-xl font-black text-zinc-100 uppercase tracking-widest">{t('app.export_title')}</h2>
+                  <p className="text-zinc-500 text-[10px] font-bold uppercase mt-1 tracking-widest">{t('app.export_desc')}</p>
+                </div>
+                <button onClick={() => setExportModalOpen(false)} className="text-zinc-500 hover:text-white">✕</button>
+              </div>
+              
+              <div className="relative group">
+                <textarea 
+                  readOnly
+                  value={exportDataString}
+                  className="w-full h-64 bg-zinc-900/50 border border-zinc-800 p-4 text-[10px] font-mono text-zinc-400 focus:outline-none focus:border-zinc-700 resize-none rounded-sm custom-scrollbar"
+                />
+                <div className="absolute inset-0 bg-zinc-950/20 opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity"></div>
+              </div>
+
+              <div className="flex items-center gap-3 pt-6">
+                <button 
+                  onClick={handleCopyExport}
+                  className={`flex-1 py-3 ${copied ? 'bg-emerald-600' : 'bg-zinc-100'} ${copied ? 'text-white' : 'text-zinc-950'} hover:opacity-90 text-[10px] font-black uppercase tracking-[0.2em] transition-all rounded-sm`}
+                >
+                  {copied ? t('app.copied') : t('app.copy')}
+                </button>
+                <button 
+                  onClick={() => setExportModalOpen(false)}
+                  className="flex-1 py-3 border border-zinc-800 text-zinc-400 hover:text-zinc-200 hover:bg-zinc-900 text-[10px] font-black uppercase tracking-[0.2em] transition-all rounded-sm"
+                >
+                  {t('dashboard.modal.cancel')}
+                </button>
+              </div>
+           </div>
+        </div>
+      )}
+
+      {/* IMPORT MODAL */}
+      {importModalOpen && (
+        <div className="fixed inset-0 z-[300] flex items-center justify-center bg-black/80 backdrop-blur-md animate-in fade-in duration-200">
+           <div className="w-full max-w-2xl bg-zinc-950 border border-zinc-800 shadow-2xl p-8 animate-in zoom-in-95 duration-200 rounded-sm">
+              <div className="flex justify-between items-start mb-6">
+                <div>
+                  <h2 className="text-xl font-black text-zinc-100 uppercase tracking-widest">{t('app.import_title')}</h2>
+                  <p className="text-zinc-500 text-[10px] font-bold uppercase mt-1 tracking-widest">{t('app.import_desc')}</p>
+                </div>
+                <button onClick={() => setImportModalOpen(false)} className="text-zinc-500 hover:text-white">✕</button>
+              </div>
+              
+              <textarea 
+                autoFocus
+                value={importInput}
+                onChange={(e) => setImportInput(e.target.value)}
+                placeholder='{ "meta": ... , "project": ... }'
+                className="w-full h-64 bg-zinc-900 border border-zinc-800 p-4 text-[10px] font-mono text-zinc-300 focus:outline-none focus:border-zinc-500 resize-none rounded-sm custom-scrollbar"
+              />
+
+              <div className="flex items-center gap-3 pt-6">
+                <button 
+                  onClick={executeImport}
+                  disabled={!importInput.trim()}
+                  className="flex-1 py-3 bg-zinc-100 text-zinc-950 hover:bg-white disabled:opacity-50 disabled:cursor-not-allowed text-[10px] font-black uppercase tracking-[0.2em] transition-all rounded-sm"
+                >
+                  {t('app.import_action')}
+                </button>
+                <button 
+                  onClick={handleFileImport}
+                  className="flex-1 py-3 border border-zinc-800 text-zinc-100 hover:bg-zinc-900 text-[10px] font-black uppercase tracking-[0.2em] transition-all rounded-sm"
+                >
+                  {t('dashboard.import_json')}
+                </button>
+                <button 
+                  onClick={() => setImportModalOpen(false)}
+                  className="flex-1 py-3 border border-zinc-800 text-zinc-400 hover:text-zinc-200 hover:bg-zinc-900 text-[10px] font-black uppercase tracking-[0.2em] transition-all rounded-sm"
+                >
+                  {t('dashboard.modal.cancel')}
+                </button>
+              </div>
+           </div>
+        </div>
+      )}
       </>
       )}
     </div>

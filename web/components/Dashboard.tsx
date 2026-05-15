@@ -12,6 +12,7 @@ interface DashboardProps {
   onMove: (id: string, targetGroup: string) => void;
   onCreateGroup: (name: string) => void;
   onDeleteGroup: (name: string) => void;
+  onImport: () => void;
 }
 
 const Dashboard: React.FC<DashboardProps> = ({ 
@@ -22,7 +23,8 @@ const Dashboard: React.FC<DashboardProps> = ({
   onDelete,
   onMove,
   onCreateGroup,
-  onDeleteGroup
+  onDeleteGroup,
+  onImport
 }) => {
   const { t } = useLanguage();
   const [selectedGroup, setSelectedGroup] = useState<string>('All');
@@ -33,6 +35,10 @@ const Dashboard: React.FC<DashboardProps> = ({
   const [newGroupName, setNewGroupName] = useState('');
   
   const [openDropdownId, setOpenDropdownId] = useState<string | null>(null);
+
+  // Confirmation States
+  const [projectToDelete, setProjectToDelete] = useState<string | null>(null);
+  const [groupToDelete, setGroupToDelete] = useState<string | null>(null);
 
   const filteredProjects = useMemo(() => {
     return projects.filter(p => {
@@ -62,8 +68,13 @@ const Dashboard: React.FC<DashboardProps> = ({
   const handleDeleteClick = (e: React.MouseEvent, id: string) => {
     e.preventDefault();
     e.stopPropagation();
-    onDelete(id);
+    setProjectToDelete(id);
   };
+
+  const handleGroupDeleteClick = (e: React.MouseEvent, groupName: string) => {
+    e.stopPropagation();
+    setGroupToDelete(groupName);
+  }
 
   const handleMoveClick = (e: React.MouseEvent, id: string, group: string) => {
     e.preventDefault();
@@ -71,6 +82,20 @@ const Dashboard: React.FC<DashboardProps> = ({
     onMove(id, group);
     setOpenDropdownId(null);
   };
+
+  const confirmDeleteProject = () => {
+    if (projectToDelete) {
+        onDelete(projectToDelete);
+        setProjectToDelete(null);
+    }
+  }
+
+  const confirmDeleteGroup = () => {
+      if (groupToDelete) {
+          onDeleteGroup(groupToDelete);
+          setGroupToDelete(null);
+      }
+  }
 
   return (
     <div className="w-full h-full bg-[#09090b] flex overflow-hidden">
@@ -102,9 +127,9 @@ const Dashboard: React.FC<DashboardProps> = ({
                </button>
                {group !== 'General' && (
                   <button 
-                    onClick={(e) => { e.stopPropagation(); onDeleteGroup(group); }}
+                    onClick={(e) => handleGroupDeleteClick(e, group)}
                     className="absolute right-10 top-2 text-rose-800 opacity-0 group-hover/item:opacity-100 hover:text-rose-500 transition-all text-[10px]"
-                    title="Delete Group"
+                    title={t('dashboard.delete_group_btn')}
                   >✕</button>
                )}
             </div>
@@ -160,12 +185,20 @@ const Dashboard: React.FC<DashboardProps> = ({
               </div>
            </div>
 
-           <button 
-             onClick={() => setIsCreatingProject(true)}
-             className="px-6 py-2.5 bg-zinc-100 text-zinc-950 text-[10px] font-black tracking-[0.2em] uppercase hover:bg-white transition-all shadow-lg hover:shadow-emerald-500/20"
-           >
-             {t('dashboard.new_flow')}
-           </button>
+           <div className="flex items-center gap-3">
+             <button 
+               onClick={onImport}
+               className="px-6 py-2.5 border border-zinc-800 text-zinc-400 text-[10px] font-black tracking-[0.2em] uppercase hover:text-zinc-100 hover:border-zinc-500 transition-all"
+             >
+               {t('dashboard.import_json')}
+             </button>
+             <button 
+               onClick={() => setIsCreatingProject(true)}
+               className="px-6 py-2.5 bg-zinc-100 text-zinc-950 text-[10px] font-black tracking-[0.2em] uppercase hover:bg-white transition-all shadow-lg hover:shadow-emerald-500/20"
+             >
+               {t('dashboard.new_flow')}
+             </button>
+           </div>
         </div>
 
         {/* Grid Area */}
@@ -212,7 +245,7 @@ const Dashboard: React.FC<DashboardProps> = ({
                      <button 
                        onClick={(e) => handleDeleteClick(e, project.id)}
                        className="w-7 h-7 flex items-center justify-center bg-zinc-950/80 text-zinc-500 hover:text-rose-500 hover:bg-rose-500/10 border border-zinc-800 hover:border-rose-500/50 rounded-sm"
-                       title="Delete"
+                       title={t('dashboard.delete_btn')}
                      >
                        <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
@@ -302,6 +335,59 @@ const Dashboard: React.FC<DashboardProps> = ({
            </div>
         </div>
       )}
+
+      {/* CONFIRM DELETE PROJECT MODAL */}
+      {projectToDelete && (
+        <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/80 backdrop-blur-sm animate-in fade-in duration-200">
+           <div className="w-full max-w-md bg-zinc-950 border border-zinc-800 shadow-2xl p-8 animate-in zoom-in-95 duration-200 rounded-sm border-l-4 border-l-rose-600">
+              <h2 className="text-xl font-black text-rose-500 uppercase tracking-widest mb-2">{t('dashboard.modal.delete_flow.title')}</h2>
+              <p className="text-zinc-400 text-sm mb-6">{t('dashboard.modal.delete_flow.text')}</p>
+              
+              <div className="flex items-center gap-3 pt-2">
+                <button 
+                  onClick={() => setProjectToDelete(null)}
+                  className="flex-1 py-3 border border-zinc-800 text-zinc-400 hover:text-zinc-200 hover:bg-zinc-900 text-[10px] font-black uppercase tracking-[0.2em] transition-all"
+                >
+                  {t('dashboard.modal.cancel')}
+                </button>
+                <button 
+                  onClick={confirmDeleteProject}
+                  className="flex-1 py-3 bg-rose-600 text-white hover:bg-rose-500 text-[10px] font-black uppercase tracking-[0.2em] transition-all shadow-lg hover:shadow-rose-900/20"
+                >
+                  {t('dashboard.modal.delete')}
+                </button>
+              </div>
+           </div>
+        </div>
+      )}
+
+      {/* CONFIRM DELETE GROUP MODAL */}
+      {groupToDelete && (
+        <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/80 backdrop-blur-sm animate-in fade-in duration-200">
+           <div className="w-full max-w-md bg-zinc-950 border border-zinc-800 shadow-2xl p-8 animate-in zoom-in-95 duration-200 rounded-sm border-l-4 border-l-rose-600">
+              <h2 className="text-xl font-black text-rose-500 uppercase tracking-widest mb-2">{t('dashboard.modal.delete_group.title')}</h2>
+              <p className="text-zinc-400 text-sm mb-6">
+                {t('dashboard.modal.delete_group.text', { name: groupToDelete })}
+              </p>
+              
+              <div className="flex items-center gap-3 pt-2">
+                <button 
+                  onClick={() => setGroupToDelete(null)}
+                  className="flex-1 py-3 border border-zinc-800 text-zinc-400 hover:text-zinc-200 hover:bg-zinc-900 text-[10px] font-black uppercase tracking-[0.2em] transition-all"
+                >
+                  {t('dashboard.modal.cancel')}
+                </button>
+                <button 
+                  onClick={confirmDeleteGroup}
+                  className="flex-1 py-3 bg-rose-600 text-white hover:bg-rose-500 text-[10px] font-black uppercase tracking-[0.2em] transition-all shadow-lg hover:shadow-rose-900/20"
+                >
+                  {t('dashboard.modal.delete')}
+                </button>
+              </div>
+           </div>
+        </div>
+      )}
+
     </div>
   );
 };
