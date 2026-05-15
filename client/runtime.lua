@@ -7,12 +7,15 @@ local activeTalkProjectId = nil
 local activeTalkPed = nil
 
 local SPEECH_PARAMS = "SPEECH_PARAMS_FORCE_NORMAL_CLEAR"
-local SPEECH_LINES = {
+local GREETING_SPEECH_LINES = {
     "GENERIC_HI",
     "GENERIC_HOWS_IT_GOING",
+}
+
+local EXIT_SPEECH_LINES = {
+    "GENERIC_BYE",
+    "GENERIC_SEE_YOU_SOON",
     "GENERIC_THANKS",
-    "GENERIC_YES",
-    "GENERIC_NO",
 }
 
 -- Initialize
@@ -66,49 +69,24 @@ local function PlayTalkAnim(ped)
     TaskPlayAnim(ped, dict, anim, 8.0, -8.0, -1, 1, 0, false, false, false)
 end
 
-local function StopNpcTalkLoop()
+local function StopNpcTalkLoop(playExitLine)
     talkLoopToken = talkLoopToken + 1
 
     if activeTalkPed and DoesEntityExist(activeTalkPed) then
         -- Stop mouth/voice immediately if possible
         StopCurrentPlayingSpeech(activeTalkPed)
         ClearPedTasks(activeTalkPed)
+        if playExitLine then
+            local exitLine = EXIT_SPEECH_LINES[math.random(1, #EXIT_SPEECH_LINES)]
+            PlayAmbientSpeech1(activeTalkPed, exitLine, SPEECH_PARAMS)
+        end
     end
 
     activeTalkProjectId = nil
     activeTalkPed = nil
 end
 
-local function EnsureNpcTalkLoop(projectId, ped)
-    if Config and Config.EnableNpcSpeech == false then return end
-    if not projectId or not DoesEntityExist(ped) then return end
 
-    -- Avoid spawning multiple loops for the same active interaction.
-    if activeTalkProjectId == projectId and activeTalkPed == ped then
-        return
-    end
-
-    talkLoopToken = talkLoopToken + 1
-    local myToken = talkLoopToken
-    activeTalkProjectId = projectId
-    activeTalkPed = ped
-
-    CreateThread(function()
-        while talkLoopToken == myToken do
-            if not DoesEntityExist(ped) then
-                break
-            end
-
-            -- Trigger short ambient speech lines; this usually drives lipsync automatically.
-            if not IsAnySpeechPlaying(ped) then
-                local line = SPEECH_LINES[math.random(1, #SPEECH_LINES)]
-                PlayAmbientSpeech1(ped, line, SPEECH_PARAMS)
-            end
-
-            Wait(2200 + math.random(300, 900))
-        end
-    end)
-end
 
 function RefreshInteractions()
     -- Cleanup existing
@@ -195,20 +173,21 @@ function SetupInteraction(project)
     end
 end
 
+local playedGreeting = {}
 function StartInteraction(project)
     -- Find Start Node
     local startNode = nil
     for _, node in ipairs(project.data.nodes) do
         if node.type == 'START' then startNode = node break end
     end
-    
     if startNode then
         -- Setup Camera and Ped
         local ped = SpawnedEntities[project.id]
         if DoesEntityExist(ped) then
             CreateInteractionCam(ped)
         end
-
+        -- Reset greeting flag for this project interaction
+        playedGreeting[project.id] = false
         ProcessNode(project, startNode)
     end
 end
@@ -226,7 +205,11 @@ function ProcessNode(project, node)
         local ped = SpawnedEntities[project.id]
         if DoesEntityExist(ped) then
             PlayTalkAnim(ped)
-            EnsureNpcTalkLoop(project.id, ped)
+            if not playedGreeting[project.id] then
+                local greetLine = GREETING_SPEECH_LINES[math.random(1, #GREETING_SPEECH_LINES)]
+                PlayAmbientSpeech1(ped, greetLine, SPEECH_PARAMS)
+                playedGreeting[project.id] = true
+            end
         end
 
         -- Show Dialogue UI
@@ -243,8 +226,12 @@ function ProcessNode(project, node)
         })
         
     elseif node.type == 'END' then
-        -- Stop Anim
-        StopNpcTalkLoop()
+        -- Stop Anim and play exit line
+        local ped = SpawnedEntities[project.id]
+        if DoesEntityExist(ped) then
+            activeTalkPed = ped
+        end
+        StopNpcTalkLoop(true)
         
         -- Destroy Cam
         DestroyInteractionCam()
@@ -355,10 +342,11 @@ RegisterNUICallback('cancelInteraction', function(data, cb)
         local ped = SpawnedEntities[projectId]
         if DoesEntityExist(ped) then
             ClearPedTasks(ped)
+            activeTalkPed = ped
         end
     end
 
-    StopNpcTalkLoop()
+    StopNpcTalkLoop(true)
     
     DestroyInteractionCam()
     SetNuiFocus(false, false)
@@ -384,6 +372,18 @@ local function StartInteractionById(projectId)
     return true
 end
 
+local function GetPedByProjectId(projectId)
+    if not projectId then return nil end
+
+    local ped = SpawnedEntities[projectId]
+    if DoesEntityExist(ped) then
+        return ped
+    else
+        return nil
+    end
+end
+
+exports('GetPedByProjectId', GetPedByProjectId)
 exports('StartInteractionById', StartInteractionById)
 
 RegisterNetEvent('rc-interactions:client:startInteractionById', function(projectId)

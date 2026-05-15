@@ -5,7 +5,7 @@ Config = {}
 Config.Framework = 'auto'
 
 -- Debug Mode
-Config.Debug = true
+Config.Debug = false
 
 -- Interaction Settings
 Config.InteractionDistance = 3.0
